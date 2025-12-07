@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+.next/
+**/.next/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Environment files (template only)
+.env
+.env.local
+**/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing artifacts
+*.test.js
+*.spec.js
+
+# Development docs (keep in server repo)
+CRASH_DIAGNOSIS_REPORT.md
+ERROR_BOUNDARY_IMPLEMENTATION.md
+PRESENTATION_THUNK_USAGE.md
