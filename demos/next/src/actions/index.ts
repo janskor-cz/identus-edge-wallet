@@ -321,10 +321,11 @@ export const connectDatabase = createAsyncThunk<
     { state: { app: RootState } }
 >("connectDatabase", async (options, api) => {
     try {
+        const state = api.getState().app;
         const hashedPassword = sha512(options.encryptionKey)
         const apollo = new SDK.Apollo();
         const store = new SDK.Store({
-            name: "test",
+            name: state.wallet.dbName, // Use wallet-specific database name
             storage: IndexDB,
             password: Buffer.from(hashedPassword).toString("hex")
         });

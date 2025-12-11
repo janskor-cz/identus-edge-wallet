@@ -161,16 +161,26 @@ export class BasicMediatorHandler implements MediatorHandler {
    *
    * @async
    * @param {number} limit
+   * @param {string} [recipientDID] - Optional: Filter messages by specific recipient DID. If omitted, fetches for ALL registered DIDs.
    * @returns {Promise<Array<{ attachmentId: string; message: Message }>>}
    */
   async pickupUnreadMessages(
-    limit: number
+    limit: number,
+    recipientDID?: string
   ): Promise<Array<{ attachmentId: string; message: Message; }>> {
     if (!this.mediator) {
       throw new AgentError.NoMediatorAvailableError();
     }
+
+    // 🔧 FIX #10: Add optional recipientKey to filter messages by specific DID
+    // This prevents fetching messages from orphaned peer DIDs (failed connections)
+    // Only fetch messages for active connections (typically CA connection)
+    const requestBody = recipientDID
+      ? { limit: limit, recipientKey: recipientDID }  // Filter by specific DID
+      : { limit: limit };                              // Fetch for all DIDs (legacy behavior)
+
     const request = new PickupRequest(
-      { limit: limit },
+      requestBody,
       this.mediator.hostDID,
       this.mediator.mediatorDID
     ).makeMessage();

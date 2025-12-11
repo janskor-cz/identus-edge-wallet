@@ -13,6 +13,7 @@ import { DIDCommContext } from "./Context";
 
 interface Args {
   offer: OfferCredential;
+  subjectDID?: Domain.DID;  // Optional: use existing PRISM DID instead of creating new one
 }
 
 export class HandleOfferCredential extends Task<RequestCredential, Args> {
@@ -66,33 +67,55 @@ export class HandleOfferCredential extends Task<RequestCredential, Args> {
       await ctx.Pluto.storeCredentialMetadata(metadata);
     }
     else if (credentialType === Domain.CredentialType.JWT) {
-      const getIndexTask = new PrismKeyPathIndexTask({});
-      const index = await ctx.run(getIndexTask);
+      let did: Domain.DID;
+      let authSk: Domain.PrivateKey;
 
-      const masterSk = await ctx.Apollo.createPrivateKey({
-        [Domain.KeyProperties.curve]: Domain.Curve.SECP256K1,
-        [Domain.KeyProperties.index]: index,
-        [Domain.KeyProperties.type]: Domain.KeyTypes.EC,
-        [Domain.KeyProperties.seed]: Buffer.from(ctx.Seed.value).toString("hex"),
-      });
+      // Check if existing PRISM DID was provided
+      if (this.args.subjectDID) {
+        // Use existing DID - retrieve its keys from Pluto
+        did = this.args.subjectDID;
+        const storedKeys = await ctx.Pluto.getDIDPrivateKeysByDID(did);
 
-      const authSk = await ctx.Apollo.createPrivateKey({
-        [Domain.KeyProperties.curve]: Domain.Curve.SECP256K1,
-        [Domain.KeyProperties.index]: index + 1,
-        [Domain.KeyProperties.type]: Domain.KeyTypes.EC,
-        [Domain.KeyProperties.seed]: Buffer.from(ctx.Seed.value).toString("hex"),
-      });
+        if (!storedKeys || storedKeys.length === 0) {
+          throw new Error(`No private keys found for existing DID: ${did.toString()}`);
+        }
 
+        // Find the authentication key (Ed25519 - AUTHENTICATION_KEY purpose)
+        // Cloud Agent requires EdDSA (Ed25519) signatures, NOT ES256K (SECP256K1)
+        authSk = storedKeys.find(key => key.curve === Domain.Curve.ED25519) || storedKeys[storedKeys.length - 1];
 
-      const did = await ctx.Castor.createPrismDID(
-        masterSk.publicKey(),
-        [],
-        [
-          authSk.publicKey()
-        ]
-      );
+        if (!authSk) {
+          throw new Error(`No suitable authentication key found for DID: ${did.toString()}`);
+        }
+      } else {
+        // Original behavior - create new DID
+        const getIndexTask = new PrismKeyPathIndexTask({});
+        const index = await ctx.run(getIndexTask);
 
-      await ctx.Pluto.storeDID(did, [masterSk, authSk]);
+        const masterSk = await ctx.Apollo.createPrivateKey({
+          [Domain.KeyProperties.curve]: Domain.Curve.SECP256K1,
+          [Domain.KeyProperties.index]: index,
+          [Domain.KeyProperties.type]: Domain.KeyTypes.EC,
+          [Domain.KeyProperties.seed]: Buffer.from(ctx.Seed.value).toString("hex"),
+        });
+
+        authSk = await ctx.Apollo.createPrivateKey({
+          [Domain.KeyProperties.curve]: Domain.Curve.SECP256K1,
+          [Domain.KeyProperties.index]: index + 1,
+          [Domain.KeyProperties.type]: Domain.KeyTypes.EC,
+          [Domain.KeyProperties.seed]: Buffer.from(ctx.Seed.value).toString("hex"),
+        });
+
+        did = await ctx.Castor.createPrismDID(
+          masterSk.publicKey(),
+          [],
+          [
+            authSk.publicKey()
+          ]
+        );
+
+        await ctx.Pluto.storeDID(did, [masterSk, authSk]);
+      }
 
       credRequestBuffer = await ctx.Pollux.processCredentialOffer<Domain.CredentialType.JWT>(payload, {
         did: did,
@@ -105,32 +128,55 @@ export class HandleOfferCredential extends Task<RequestCredential, Args> {
 
     }
     else if (credentialType === Domain.CredentialType.SDJWT) {
-      const getIndexTask = new PrismKeyPathIndexTask({});
-      const index = await ctx.run(getIndexTask);
+      let did: Domain.DID;
+      let authSk: Domain.PrivateKey;
 
-      const masterSk = await ctx.Apollo.createPrivateKey({
-        [Domain.KeyProperties.curve]: Domain.Curve.SECP256K1,
-        [Domain.KeyProperties.index]: index,
-        [Domain.KeyProperties.type]: Domain.KeyTypes.EC,
-        [Domain.KeyProperties.seed]: Buffer.from(ctx.Seed.value).toString("hex"),
-      });
+      // Check if existing PRISM DID was provided
+      if (this.args.subjectDID) {
+        // Use existing DID - retrieve its keys from Pluto
+        did = this.args.subjectDID;
+        const storedKeys = await ctx.Pluto.getDIDPrivateKeysByDID(did);
 
-      const authSk = await ctx.Apollo.createPrivateKey({
-        [Domain.KeyProperties.curve]: Domain.Curve.ED25519,
-        [Domain.KeyProperties.index]: index + 1,
-        [Domain.KeyProperties.type]: Domain.KeyTypes.EC,
-        [Domain.KeyProperties.seed]: Buffer.from(ctx.Seed.value).toString("hex"),
-      });
+        if (!storedKeys || storedKeys.length === 0) {
+          throw new Error(`No private keys found for existing DID: ${did.toString()}`);
+        }
 
-      const did = await ctx.Castor.createPrismDID(
-        masterSk.publicKey(),
-        [],
-        [
-          authSk.publicKey()
-        ]
-      );
+        // For SDJWT, prefer ED25519 key, otherwise fall back to any available key
+        authSk = storedKeys.find(key => key.curve === Domain.Curve.ED25519) || storedKeys[storedKeys.length - 1];
 
-      await ctx.Pluto.storeDID(did, [masterSk, authSk]);
+        if (!authSk) {
+          throw new Error(`No suitable authentication key found for DID: ${did.toString()}`);
+        }
+      } else {
+        // Original behavior - create new DID
+        const getIndexTask = new PrismKeyPathIndexTask({});
+        const index = await ctx.run(getIndexTask);
+
+        const masterSk = await ctx.Apollo.createPrivateKey({
+          [Domain.KeyProperties.curve]: Domain.Curve.SECP256K1,
+          [Domain.KeyProperties.index]: index,
+          [Domain.KeyProperties.type]: Domain.KeyTypes.EC,
+          [Domain.KeyProperties.seed]: Buffer.from(ctx.Seed.value).toString("hex"),
+        });
+
+        authSk = await ctx.Apollo.createPrivateKey({
+          [Domain.KeyProperties.curve]: Domain.Curve.ED25519,
+          [Domain.KeyProperties.index]: index + 1,
+          [Domain.KeyProperties.type]: Domain.KeyTypes.EC,
+          [Domain.KeyProperties.seed]: Buffer.from(ctx.Seed.value).toString("hex"),
+        });
+
+        did = await ctx.Castor.createPrismDID(
+          masterSk.publicKey(),
+          [],
+          [
+            authSk.publicKey()
+          ]
+        );
+
+        await ctx.Pluto.storeDID(did, [masterSk, authSk]);
+      }
+
       credRequestBuffer = await ctx.Pollux.processCredentialOffer<Domain.CredentialType.SDJWT>(payload, {
         did: did,
         sdJWT: true,

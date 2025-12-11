@@ -177,6 +177,11 @@ export interface Pluto {
   revokeCredential(credential: Credential): Promise<void>;
 
   /**
+   * Delete a Credential from storage permanently
+   */
+  deleteCredential(credential: Credential): Promise<void>;
+
+  /**
    * Delete a previously stored messages
    */
   deleteMessage(uuid: string): Promise<void>;

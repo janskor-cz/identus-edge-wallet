@@ -101,15 +101,40 @@ export class DIDCommWrapper implements DIDCommProtocol {
 
   async unpack(message: string): Promise<Domain.Message> {
     const didcomm = await DIDCommWrapper.getDIDComm();
-    const [didcommMsg] = await didcomm.Message.unpack(
-      message,
-      this.didResolver,
-      this.secretsResolver,
-      {
-        expect_decrypt_by_all_keys: false,
-        unwrap_re_wrapping_forward: false,
+
+    // 🔧 FIX #9: Gracefully handle DIDComm secret errors at WASM boundary
+    // DIDCommSecretNotFound errors occur when encrypted messages arrive before peer DID keys are persisted
+    // These are NON-FATAL errors during connection establishment - the SDK will retry decryption
+    let didcommMsg;
+    try {
+      [didcommMsg] = await didcomm.Message.unpack(
+        message,
+        this.didResolver,
+        this.secretsResolver,
+        {
+          expect_decrypt_by_all_keys: false,
+          unwrap_re_wrapping_forward: false,
+        }
+      );
+    } catch (error: any) {
+      // ✅ Gracefully handle missing recipient secrets (non-fatal)
+      // These occur when encrypted messages arrive before peer DID keys are persisted
+      if (error?.message?.includes('No recipient secrets found') ||
+          error?.message?.includes('SecretNotFound') ||
+          error?.message?.includes('DIDCommSecretNotFound')) {
+        console.warn('⚠️ [DIDCommWrapper] Cannot decrypt message - recipient keys not yet available');
+        console.warn('⚠️ [DIDCommWrapper] This is normal during connection establishment');
+        console.warn('⚠️ [DIDCommWrapper] Message will be skipped, will retry on next fetch');
+
+        // Throw custom error that can be filtered out in PickupRunner
+        throw new MercuryError.DIDCommDecryptionError(
+          `Message decryption deferred - recipient keys not available: ${error.message}`
+        );
       }
-    );
+
+      // Re-throw other unexpected errors
+      throw error;
+    }
 
     const msgObj = didcommMsg.as_value();
     const toString = msgObj.to?.at(0);

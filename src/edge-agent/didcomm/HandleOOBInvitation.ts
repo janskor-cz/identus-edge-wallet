@@ -30,9 +30,9 @@ export class HandleOOBInvitation extends Task<void, Args> {
         throw new Domain.AgentError.NoMediatorAvailableError();
       }
 
-      const request = HandshakeRequest.fromOutOfBand(this.args.invitation, peerDID);
-      await ctx.ConnectionManager.sendMessage(request.makeMessage());
       const alias = this.args.alias ?? "OOBConn";
+      const request = HandshakeRequest.fromOutOfBand(this.args.invitation, peerDID, alias);
+      await ctx.ConnectionManager.sendMessage(request.makeMessage());
       const pair = new Domain.DIDPair(peerDID, request.to, alias);
       await ctx.ConnectionManager.addConnection(pair);
     }

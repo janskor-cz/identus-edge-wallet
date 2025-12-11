@@ -1,9 +1,9 @@
 [submodule "externals/anoncreds"]
   path = externals/anoncreds
-  url = git@github.com:input-output-hk/anoncreds-rs.git
+  url = https://github.com/input-output-hk/anoncreds-rs.git
   branch = feature/wasm-integration
 
 [submodule "externals/didcomm"]
   path = externals/didcomm
-  url = git@github.com:elribonazo/didcomm-rust.git
+  url = https://github.com/elribonazo/didcomm-rust.git
   branch = feature/jwe-rust 

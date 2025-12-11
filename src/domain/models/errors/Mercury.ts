@@ -80,3 +80,19 @@ export class UrlSessionError extends Error {
     this.error = error;
   }
 }
+
+/**
+ * DIDCommDecryptionError
+ *
+ * Thrown when DIDComm message decryption fails due to missing recipient secrets/keys.
+ * This is a NON-FATAL error that occurs during connection establishment when encrypted
+ * messages arrive before peer DID keys are persisted to storage.
+ *
+ * The SDK will retry decryption on the next message poll when keys become available.
+ */
+export class DIDCommDecryptionError extends Error {
+  constructor(message?: string) {
+    super(message || "DIDComm message decryption deferred - recipient keys not yet available");
+    this.name = "DIDCommDecryptionError";
+  }
+}

@@ -230,6 +230,7 @@ export default class Castor implements CastorInterface {
    * @param {?(Service[] | undefined)} [services]
    * @param {?(PublicKey[] | undefined)} [authenticationKeys]
    * @param {?(PublicKey[] | undefined)} [issuanceKeys]
+   * @param {?(PublicKey[] | undefined)} [keyAgreementKeys] - X25519 keys for encryption/key agreement
    * @returns {Promise<DID>}
    */
   async createPrismDID(
@@ -237,6 +238,7 @@ export default class Castor implements CastorInterface {
     services?: Service[] | undefined,
     authenticationKeys: (PublicKey | KeyPair)[] = [],
     issuanceKeys: (PublicKey | KeyPair)[] = [],
+    keyAgreementKeys: (PublicKey | KeyPair)[] = [],
   ): Promise<DID> {
     const didPublicKeys: Protos.io.iohk.atala.prism.protos.PublicKey[] = [];
     const masterPublicKey = "publicKey" in key ? key.publicKey : key;
@@ -266,6 +268,18 @@ export default class Castor implements CastorInterface {
         const prismDIDPublicKey = new PrismDIDPublicKey(
           getUsageId(Usage.ISSUING_KEY, index),
           Usage.ISSUING_KEY,
+          pk,
+        )
+        didPublicKeys.push(prismDIDPublicKey.toProto())
+      }
+    }
+
+    if (keyAgreementKeys.length) {
+      for (const [index, keyAgreementKey] of keyAgreementKeys.entries()) {
+        const pk = "publicKey" in keyAgreementKey ? keyAgreementKey.publicKey : keyAgreementKey
+        const prismDIDPublicKey = new PrismDIDPublicKey(
+          getUsageId(Usage.KEY_AGREEMENT_KEY, index),
+          Usage.KEY_AGREEMENT_KEY,
           pk,
         )
         didPublicKeys.push(prismDIDPublicKey.toProto())

@@ -193,7 +193,23 @@ export class ConnectionsManager implements ConnectionsManagerClass {
     }
 
     const storeDIDPairTask = new CancellableTask<DIDPair>(async () => {
-      await this.pluto.storeDIDPair(paired.host, paired.receiver, paired.name);
+      try {
+        await this.pluto.storeDIDPair(paired.host, paired.receiver, paired.name);
+        console.log(`✅ [ConnectionsManager] DID pair stored successfully: ${paired.name || 'unnamed'}`);
+      } catch (error: any) {
+        // Gracefully handle RxDB CONFLICT errors (status 409)
+        if (error.status === 409 || error.code === 'CONFLICT' || error.message?.includes('CONFLICT')) {
+          console.log(`⚠️ [ConnectionsManager] CONFLICT on storeDIDPair - connection may already exist: ${paired.name || 'unnamed'}`);
+          console.log(`✅ [ConnectionsManager] Continuing with connection establishment despite conflict`);
+          // Continue - don't throw. DIDRepository.save() already handled the conflict at lower level.
+        } else {
+          // Re-throw non-conflict errors
+          console.error(`❌ [ConnectionsManager] Unexpected error in storeDIDPair:`, error);
+          throw error;
+        }
+      }
+
+      // Always emit CONNECTION event so UI updates, even if there was a CONFLICT
       this.events.emit(ListenerKey.CONNECTION, paired);
       return paired;
     });
@@ -274,6 +290,27 @@ export class ConnectionsManager implements ConnectionsManagerClass {
       uri.startsWith("wss://")
     )
     );
+
+    // 🔧 FIX #10: Get CA connection DID to filter message polling
+    // Only poll for messages from CA connection, not orphaned peer DIDs
+    const getCAConnectionDID = async (): Promise<string | undefined> => {
+      try {
+        const allPairs = await this.pluto.getAllDidPairs();
+        // Find CA connection (connection named "Certification Authority")
+        const caPair = allPairs.find((pair: DIDPair) => pair.name === "Certification Authority");
+        if (caPair) {
+          console.log(`✅ [ConnectionsManager] Polling for CA connection only: ${caPair.host.toString()}`);
+          return caPair.host.toString();
+        }
+        // Fallback: If no CA connection found, don't filter (legacy behavior)
+        console.warn('⚠️ [ConnectionsManager] No CA connection found, polling for all DIDs');
+        return undefined;
+      } catch (error) {
+        console.error('❌ [ConnectionsManager] Error getting CA connection DID:', error);
+        return undefined;
+      }
+    };
+
     if (hasWebsocket && this.withWebsocketsExperiment) {
       this.cancellable = new CancellableTask(async (signal) => {
         this.mediationHandler.listenUnreadMessages(
@@ -285,6 +322,8 @@ export class ConnectionsManager implements ConnectionsManagerClass {
     } else {
       const timeInterval = Math.max(iterationPeriod, 5) * 1000;
       this.cancellable = new CancellableTask(async () => {
+        // 🔧 FIX #11: Poll ALL connections, not just CA
+        // Previous FIX #10 broke TechCorp proof requests by filtering to CA only
         const unreadMessages = await this.mediationHandler.pickupUnreadMessages(10);
         await this.processMessages(unreadMessages);
       }, timeInterval);

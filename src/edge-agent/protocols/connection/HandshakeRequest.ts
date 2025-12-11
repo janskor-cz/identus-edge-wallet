@@ -75,13 +75,20 @@ export class HandshakeRequest {
 
   static fromOutOfBand(
     inviteMessage: OutOfBandInvitation,
-    from: DID
+    from: DID,
+    label?: string
   ): HandshakeRequest {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const toDID = DID.fromString(inviteMessage.from!);
 
+    // Create body with label field included
+    const requestBody: HandshakeRequestBody = {
+      ...inviteMessage.body,
+      label: label ?? "Unspecified"
+    };
+
     return new HandshakeRequest(
-      inviteMessage.body,
+      requestBody,
       from,
       toDID,
       inviteMessage.id

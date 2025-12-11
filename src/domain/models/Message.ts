@@ -101,28 +101,45 @@ export class Message implements Pluto.Storable {
       throw new AgentError.InvalidMessageError("undefined or wrong direction");
     }
 
-    const attachments: AttachmentDescriptor[] = messageObj.attachments
-      .filter((attachment: any) => {
-        if (
-          this.isBase64Attachment(attachment.data) ||
-          this.isJsonAttachment(attachment.data)
-        ) {
-          return true;
-        }
-        throw new AgentError.UnsupportedAttachmentType();
-      })
-      .map((attachment: any) => {
-        return new AttachmentDescriptor(
-          attachment.data,
-          attachment.mediaType,
-          attachment.id,
-          attachment.filename,
-          attachment.format,
-          attachment.lastModTime,
-          attachment.byteCount,
-          attachment.description
-        );
-      });
+    // ✅ FIX: Gracefully filter invalid attachments instead of throwing
+    // Handle empty attachments array early (standard for connection responses)
+    const attachments: AttachmentDescriptor[] = !messageObj.attachments || messageObj.attachments.length === 0
+      ? []
+      : messageObj.attachments
+          .filter((attachment: any) => {
+            // Skip attachments with missing data
+            if (!attachment || !attachment.data) {
+              console.warn('⚠️ [Message.fromJson] Skipping attachment with missing data:', attachment?.id || 'unknown');
+              return false;
+            }
+
+            // Accept valid Base64 or JSON attachments
+            if (
+              this.isBase64Attachment(attachment.data) ||
+              this.isJsonAttachment(attachment.data)
+            ) {
+              return true;
+            }
+
+            // Filter out unsupported attachments instead of throwing
+            console.warn('⚠️ [Message.fromJson] Skipping unsupported attachment type:', {
+              id: attachment.id,
+              dataKeys: Object.keys(attachment.data || {})
+            });
+            return false;
+          })
+          .map((attachment: any) => {
+            return new AttachmentDescriptor(
+              attachment.data,
+              attachment.mediaType,
+              attachment.id,
+              attachment.filename,
+              attachment.format,
+              attachment.lastModTime,
+              attachment.byteCount,
+              attachment.description
+            );
+          });
 
     const id = messageObj.id || undefined;
     const piuri = messageObj.piuri || messageObj.type;

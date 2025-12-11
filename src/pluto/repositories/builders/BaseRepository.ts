@@ -37,6 +37,10 @@ export abstract class BaseRepository<T extends Model> {
       return obj;
     }
     catch (e) {
+      // ✅ FIX: Preserve original error for debugging
+      console.error(`❌ [BaseRepository] Insert failed for collection "${this.name}":`, e);
+      console.error('❌ [BaseRepository] Error type:', (e as any)?.constructor?.name);
+      console.error('❌ [BaseRepository] Error message:', (e as any)?.message);
       throw new Domain.PlutoError.StoreInsertError();
     }
   }

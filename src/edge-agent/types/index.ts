@@ -111,7 +111,8 @@ export abstract class MediatorHandler {
   abstract updateKeyListWithDIDs(dids: DID[]): Promise<void>;
 
   abstract pickupUnreadMessages(
-    limit: number
+    limit: number,
+    recipientDID?: string
   ): Promise<Array<{ attachmentId: string; message: Message; }>>;
 
   abstract registerMessagesAsRead(ids: string[]): Promise<void>;

@@ -2,7 +2,7 @@ import { uuid } from "@stablelib/uuid";
 import { AgentError } from "../../../domain/models/Errors";
 import { AttachmentDescriptor, DID, Message } from "../../../domain";
 import { ProtocolType } from "../ProtocolTypes";
-import { CredentialPreview, validateCredentialPreview } from "./CredentialPreview";
+import { CredentialPreview } from "./CredentialPreview";
 import { isNil, isObject } from "../../../utils";
 
 /**
@@ -18,7 +18,8 @@ export interface OfferCredentialBody {
   // an optional field that provides human readable information about this Credential Offer
   comment?: string;
   // a JSON-LD object that represents the credential data that Issuer is willing to issue
-  credential_preview: CredentialPreview;
+  // Made optional to support Cloud Agent offers that may not include preview in body
+  credential_preview?: CredentialPreview;
 }
 
 export class OfferCredential {
@@ -36,13 +37,9 @@ export class OfferCredential {
   }
 
   private validate() {
-    if (validateCredentialPreview(this.body.credential_preview)) {
-      return;
-    }
-
-    throw new AgentError.InvalidOfferCredentialMessageError(
-      "Invalid offer credential message error."
-    );
+    // credential_preview is optional and may have various formats
+    // Cloud Agent may send offers without preview or with non-standard preview formats
+    // Actual credential data is in attachments, so no validation needed
   }
 
   makeMessage(): Message {
@@ -68,8 +65,10 @@ export class OfferCredential {
       );
     }
 
-    if (!isObject(msg.body) || !isObject(msg.body.credential_preview)) {
-      throw new AgentError.InvalidOfferCredentialBodyError("Undefined credentialPreview");
+    // Only validate that body is an object
+    // credential_preview is optional - may be in attachments instead
+    if (!isObject(msg.body)) {
+      throw new AgentError.InvalidOfferCredentialBodyError("Invalid body");
     }
 
     return new OfferCredential(

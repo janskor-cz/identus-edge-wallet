@@ -4,7 +4,20 @@ import { v4 as uuidv4 } from "uuid";
 import { DBPreload, Message, Credential, Mediator } from "@/actions/types";
 import { acceptCredentialOffer, acceptPresentationRequest, connectDatabase, initAgent, rejectCredentialOffer, sendMessage, startAgent, stopAgent } from "../actions";
 
-const defaultMediatorDID = "did:peer:2.Ez6LSghwSE437wnDE1pt3X6hVDUQzSjsHzinpX3XFvMjRAm7y.Vz6Mkhh1e5CEYYq6JBUcTZ6Cp2ranCWRrv7Yax3Le4N59R6dd.SeyJ0IjoiZG0iLCJzIjp7InVyaSI6Imh0dHA6Ly8xOTIuMTY4LjEuNDQ6ODA4MCIsImEiOlsiZGlkY29tbS92MiJdfX0.SeyJ0IjoiZG0iLCJzIjp7InVyaSI6IndzOi8vMTkyLjE2OC4xLjQ0OjgwODAvd3MiLCJhIjpbImRpZGNvbW0vdjIiXX19";
+// Environment-based wallet configuration
+const getWalletConfig = () => {
+    const walletId = process.env.NEXT_PUBLIC_WALLET_ID || 'default';
+    const walletName = process.env.NEXT_PUBLIC_WALLET_NAME || 'Identity Wallet';
+
+    return {
+        walletId,
+        walletName,
+        dbName: `identus-wallet-${walletId}`, // Unique database per wallet
+        storagePrefix: `wallet-${walletId}-` // Unique storage prefix
+    };
+};
+
+const defaultMediatorDID = "did:peer:2.Ez6LSghwSE437wnDE1pt3X6hVDUQzSjsHzinpX3XFvMjRAm7y.Vz6Mkhh1e5CEYYq6JBUcTZ6Cp2ranCWRrv7Yax3Le4N59R6dd.SeyJ0IjoiZG0iLCJzIjp7InVyaSI6Imh0dHA6Ly85MS45OS40LjU0OjgwODAiLCJhIjpbImRpZGNvbW0vdjIiXX19.SeyJ0IjoiZG0iLCJzIjp7InVyaSI6IndzOi8vOTEuOTkuNC41NDo4MDgwL3dzIiwiYSI6WyJkaWRjb21tL3YyIl19fQ";
 
 export type ApiCall = {
     title: string,
@@ -75,8 +88,11 @@ const defaultSeed = new SDK.Apollo().createSeed([
 
 ])
 
+const walletConfig = getWalletConfig();
+
 export const initialState: RootState = {
     errors: [],
+    wallet: walletConfig,
     db: {
         instance: null,
         connected: false,
@@ -100,8 +116,16 @@ export const initialState: RootState = {
 
 export type ExtendedMessage = SDK.Domain.Message & { isAnswering: boolean; hasAnswered: boolean, error: TraceableError | null }
 
+export type WalletConfig = {
+    walletId: string;
+    walletName: string;
+    dbName: string;
+    storagePrefix: string;
+};
+
 export type RootState = {
     errors: TraceableError[];
+    wallet: WalletConfig;
     db: {
         instance: SDK.Domain.Pluto | null,
         connected: boolean

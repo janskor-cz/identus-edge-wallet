@@ -179,6 +179,16 @@ export class Pluto extends Startable.Controller implements Domain.Pluto {
     await this.Repositories.Credentials.update(credentialModel);
   }
 
+  async deleteCredential(credential: Domain.Credential): Promise<void> {
+    if (!credential || !credential.isStorable()) {
+      throw new Error("Credential not found or invalid");
+    }
+    const credentialModel = await this.Repositories.Credentials.findOne({ id: credential.id });
+    if (credentialModel) {
+      await this.Repositories.Credentials.delete(credentialModel.uuid);
+    }
+  }
+
 
   /** Credential Metadata **/
 
@@ -336,6 +346,22 @@ export class Pluto extends Startable.Controller implements Domain.Pluto {
   async storeDIDPair(host: Domain.DID, receiver: Domain.DID, alias: string): Promise<void> {
     await this.Repositories.DIDs.save(host);
     await this.Repositories.DIDs.save(receiver);
+
+    // 🔧 FIX: Check if DIDPair already exists before inserting (prevent duplicates)
+    const existingLinks = await this.Repositories.DIDLinks.getModels({
+      selector: {
+        role: Models.DIDLink.role.pair,
+        hostId: host.uuid,
+        targetId: receiver.uuid
+      }
+    });
+
+    if (existingLinks.length > 0) {
+      console.log(`ℹ️ [Pluto] DIDPair already exists, skipping storage: ${alias}`);
+      console.log(`   Host: ${host.toString()}`);
+      console.log(`   Receiver: ${receiver.toString()}`);
+      return;
+    }
 
     await this.Repositories.DIDLinks.insert({
       alias,

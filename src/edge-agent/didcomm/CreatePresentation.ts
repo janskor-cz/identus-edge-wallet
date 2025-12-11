@@ -118,7 +118,8 @@ export class CreatePresentation extends Task<Presentation, Args> {
           throw new Error("Credential is not Provable");
         }
         const privateKeys = await ctx.Pluto.getDIDPrivateKeysByDID(Domain.DID.fromString(credential.subject));
-        const privateKey = privateKeys.at(0);
+        // Cloud Agent requires EdDSA (Ed25519) signatures for presentation verification
+        const privateKey = privateKeys.find((key) => key.curve === Domain.Curve.ED25519) || privateKeys.at(0);
         if (!privateKey) {
           throw new Error("Undefined privatekey from credential subject.");
         }
@@ -142,7 +143,8 @@ export class CreatePresentation extends Task<Presentation, Args> {
           ['subject', 'sub']
         )
         const privateKeys = await ctx.Pluto.getDIDPrivateKeysByDID(Domain.DID.fromString(sub));
-        const privateKey = privateKeys.at(0);
+        // Cloud Agent requires EdDSA (Ed25519) signatures for presentation verification
+        const privateKey = privateKeys.find((key) => key.curve === Domain.Curve.ED25519) || privateKeys.at(0);
         if (!privateKey) {
           throw new Error("Undefined privatekey from credential subject.");
         }
@@ -218,7 +220,8 @@ export class CreatePresentation extends Task<Presentation, Args> {
       }
       const subjectDID = Domain.DID.from(credential.subject);
       const prismPrivateKeys = await ctx.Pluto.getDIDPrivateKeysByDID(subjectDID);
-      const prismPrivateKey = prismPrivateKeys.find((key) => key.curve === Domain.Curve.SECP256K1);
+      // Cloud Agent requires EdDSA (Ed25519) signatures for presentation verification
+      const prismPrivateKey = prismPrivateKeys.find((key) => key.curve === Domain.Curve.ED25519);
       if (prismPrivateKey === undefined) {
         throw new Domain.AgentError.CannotFindDIDPrivateKey();
       }

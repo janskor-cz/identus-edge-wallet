@@ -147,6 +147,16 @@ export default class DIDCommAgent extends Startable.Controller {
       if (e instanceof Domain.AgentError.NoMediatorAvailableError) {
         const hostDID = await this.createNewPeerDID([], false);
         await this.connectionManager.registerMediator(hostDID);
+
+        // ✅ FIX: Reload mediator from database after registration
+        await this.connectionManager.mediationHandler.bootRegisteredMediator();
+
+        // ✅ VERIFY: Check mediator is now loaded
+        if (!this.connectionManager.mediationHandler.mediator) {
+          throw new Domain.AgentError.MediationRequestFailedError(
+            "Mediator registration succeeded but reload from database failed"
+          );
+        }
       }
       else {
         throw e;
@@ -449,12 +459,18 @@ export default class DIDCommAgent extends Startable.Controller {
    *
    * @async
    * @param {OfferCredential} offer
+   * @param {Object} options - Optional configuration
+   * @param {Domain.DID} options.subjectDID - Optional existing PRISM DID to use as credential subject instead of creating new one
    * @returns {Promise<RequestCredential>}
    */
   async prepareRequestCredentialWithIssuer(
-    offer: OfferCredential
+    offer: OfferCredential,
+    options?: { subjectDID?: Domain.DID }
   ): Promise<RequestCredential> {
-    const task = new HandleOfferCredential({ offer });
+    const task = new HandleOfferCredential({
+      offer,
+      subjectDID: options?.subjectDID
+    });
     return this.runTask(task);
   }
 

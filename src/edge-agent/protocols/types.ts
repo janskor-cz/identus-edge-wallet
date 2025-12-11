@@ -69,6 +69,7 @@ export interface HandshakeRequestBody {
   goalCode?: string;
   goal?: string;
   accept?: string[];
+  label?: string;
 }
 
 export type OutOfBandInvitationBody = HandshakeRequestBody;
