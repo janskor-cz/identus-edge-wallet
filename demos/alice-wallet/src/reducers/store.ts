@@ -9,7 +9,19 @@ import * as actions from "../actions";
 
 import { RootState, initialState } from "./app";
 import { initialEnterpriseAgentState, EnterpriseAgentState } from "./enterpriseAgent";
+import classifiedDocumentsReducer, { ClassifiedDocumentsState } from "./classifiedDocuments";
 import { TypedUseSelectorHook, useDispatch, useSelector } from "react-redux";
+
+// Initial state for classified documents
+const initialClassifiedDocumentsState: ClassifiedDocumentsState = {
+    documents: [],
+    selectedDocument: null,
+    isLoading: false,
+    isViewing: false,
+    error: null,
+    lastRefresh: null,
+    stats: null
+};
 
 
 export const store = configureStore({
@@ -17,7 +29,8 @@ export const store = configureStore({
     devTools: false,
     preloadedState: {
         app: initialState,
-        enterpriseAgent: initialEnterpriseAgentState
+        enterpriseAgent: initialEnterpriseAgentState,
+        classifiedDocuments: initialClassifiedDocumentsState
     },
     middleware: (getDefaultMiddleware) =>
         getDefaultMiddleware({
@@ -111,8 +124,11 @@ export const store = configureStore({
 
 export type AppDispatch = typeof store.dispatch;
 export const useAppDispatch = () => useDispatch<AppDispatch>();
-export const useAppSelector: TypedUseSelectorHook<{ app: RootState; enterpriseAgent: EnterpriseAgentState }> =
-    useSelector;
+export const useAppSelector: TypedUseSelectorHook<{
+    app: RootState;
+    enterpriseAgent: EnterpriseAgentState;
+    classifiedDocuments: ClassifiedDocumentsState;
+}> = useSelector;
 
 export const useMountedApp = () => {
     const dispatch = useDispatch<AppDispatch>();

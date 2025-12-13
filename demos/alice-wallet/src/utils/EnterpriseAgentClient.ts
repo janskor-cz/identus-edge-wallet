@@ -450,6 +450,91 @@ export class EnterpriseAgentClient {
   }
 
   /**
+   * Create ephemeral PRISM DID with X25519 key and service endpoint
+   *
+   * Used for SSI-compliant document delivery where the wallet controls
+   * the encryption keys. Creates a DID with:
+   * - X25519 key for document encryption
+   * - Service endpoint pointing to document access URL
+   *
+   * @param serviceEndpoint - URL where encrypted document can be fetched
+   * @param storageId - Identifier for the document storage
+   * @param expiresAt - Expiration timestamp for the document
+   * @returns Created DID record with full DID document
+   */
+  public async createEphemeralDIDWithServiceEndpoint(
+    serviceEndpoint: string,
+    storageId: string,
+    expiresAt: string
+  ): Promise<ApiResponse<{
+    did: string;
+    longFormDid?: string;
+    status: string;
+    publicKeys?: Array<{
+      id: string;
+      purpose: string;
+      publicKeyJwk?: {
+        crv: string;
+        x: string;
+        kty: string;
+      };
+    }>;
+    services?: Array<{
+      id: string;
+      type: string;
+      serviceEndpoint: string;
+    }>;
+  }>> {
+    // Create DID document template with X25519 key and service endpoint
+    const documentTemplate = {
+      documentTemplate: {
+        publicKeys: [
+          {
+            id: 'key-agreement-1',
+            purpose: 'keyAgreement'  // X25519 for encryption
+          }
+        ],
+        services: [
+          {
+            id: 'document-access',
+            type: 'EncryptedDocumentService',
+            serviceEndpoint: JSON.stringify({
+              uri: serviceEndpoint,
+              storageId: storageId,
+              expiresAt: expiresAt,
+              encryption: 'X25519-XSalsa20-Poly1305'
+            })
+          }
+        ]
+      }
+    };
+
+    console.log('[EnterpriseAgentClient] Creating ephemeral DID with service endpoint:', {
+      serviceEndpoint,
+      storageId,
+      expiresAt: expiresAt
+    });
+
+    return this.request(
+      '/did-registrar/dids',
+      {
+        method: 'POST',
+        body: JSON.stringify(documentTemplate)
+      }
+    );
+  }
+
+  /**
+   * Get full DID document for a managed DID
+   *
+   * @param did - The DID to resolve
+   * @returns Full DID document with keys and services
+   */
+  public async getDIDDocument(did: string): Promise<ApiResponse<any>> {
+    return this.request(`/dids/${encodeURIComponent(did)}`);
+  }
+
+  /**
    * List all proof presentations in enterprise wallet
    *
    * @returns Array of presentation records

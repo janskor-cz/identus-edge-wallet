@@ -24,6 +24,7 @@ import { base64url } from 'jose';
 import { decryptMessage, EncryptedMessageBody } from './messageEncryption';
 import { getItem } from './prefixedStorage';
 import { findKeyByFingerprintInPluto, extractKeysFromPrismDID } from './plutoKeyExtractor';
+import { storeDocument, StoredDocument, DocumentStatus } from './documentStorage';
 
 // Module-level agent reference for Pluto fallback
 let _sdkAgent: any = null;
@@ -84,6 +85,60 @@ export type DashboardMessage =
       documentDID: string;
       clearanceLevel: number;
       timestamp: number;
+    }
+  | {
+      type: 'DOCUMENT_STORAGE_REQUEST';
+      requestId: string;
+      ephemeralDID: string;
+      originalDocumentDID: string;
+      title: string;
+      overallClassification: string;
+      encryptedContent: string; // Base64-encoded encrypted document
+      encryptionInfo: {
+        algorithm: string;
+        serverPublicKey: string;
+        nonce: string;
+      };
+      sectionSummary: {
+        total: number;
+        visible: number;
+        redacted: number;
+      };
+      expiresAt: string;
+      accessRights: {
+        expiresAt: string;
+        viewsAllowed: number;
+        downloadAllowed: boolean;
+        printAllowed: boolean;
+      };
+      sourceInfo: {
+        filename: string;
+        format: string;
+        contentType: string;
+        originalSize: number;
+      };
+      timestamp: number;
+    }
+  | {
+      type: 'OPEN_DOCUMENT';
+      requestId: string;
+      ephemeralDID: string;
+      title: string;
+      sourceInfo: {
+        filename: string;
+        format: string;
+        contentType: string;
+      };
+      timestamp: number;
+    }
+  | {
+      type: 'SSI_DOCUMENT_DOWNLOAD_REQUEST';
+      requestId: string;
+      documentDID: string;
+      title: string;
+      sessionId: string;
+      serverBaseUrl: string;
+      timestamp: number;
     };
 
 // Allowed dashboard origins
@@ -138,6 +193,18 @@ export function initSecureDashboardBridge(walletId: string): void {
 
         case 'DOCUMENT_ACCESS_REQUEST':
           await handleDocumentAccessRequest(event.source as Window, event.origin, message);
+          break;
+
+        case 'DOCUMENT_STORAGE_REQUEST':
+          await handleDocumentStorageRequest(event.source as Window, event.origin, message);
+          break;
+
+        case 'OPEN_DOCUMENT':
+          await handleOpenDocumentRequest(event.source as Window, event.origin, message);
+          break;
+
+        case 'SSI_DOCUMENT_DOWNLOAD_REQUEST':
+          await handleSSIDocumentDownloadRequest(event.source as Window, event.origin, message);
           break;
 
         default:
@@ -484,6 +551,21 @@ async function handleDocumentAccessRequest(
 
     console.log(`🔑 [SecureDashboardBridge] Ephemeral DID: ${ephemeralDID.substring(0, 50)}...`);
 
+    // Get user's PRISM DID from Pluto for unique user identification
+    let requestorDID = 'did:prism:wallet-user'; // Fallback if no PRISM DID found
+    try {
+      const prismDIDs = await _sdkAgent!.pluto.getAllPrismDIDs();
+      if (prismDIDs && prismDIDs.length > 0) {
+        // Use the first PRISM DID (most likely the one created during CA connection)
+        requestorDID = prismDIDs[0].did.toString();
+        console.log(`🆔 [SecureDashboardBridge] Using PRISM DID for requestorDID: ${requestorDID.substring(0, 50)}...`);
+      } else {
+        console.warn('⚠️ [SecureDashboardBridge] No PRISM DID found, using fallback identifier');
+      }
+    } catch (prismError) {
+      console.warn('⚠️ [SecureDashboardBridge] Failed to get PRISM DID:', prismError);
+    }
+
     // Build headers - include session token if provided for server authentication
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (sessionToken) {
@@ -498,7 +580,7 @@ async function handleDocumentAccessRequest(
       headers,
       body: JSON.stringify({
         documentDID,
-        requestorDID: 'did:prism:wallet-user', // Will be replaced with actual PRISM DID
+        requestorDID, // User's actual PRISM DID from Pluto
         issuerDID,
         clearanceLevel,
         ephemeralDID,
@@ -567,6 +649,453 @@ async function handleDocumentAccessRequest(
     } catch (postError) {
       console.error('❌ [SecureDashboardBridge] Failed to send error response:', postError);
     }
+  }
+}
+
+/**
+ * Handle DOCUMENT_STORAGE_REQUEST from dashboard
+ * Stores encrypted document for later viewing in IndexedDB
+ */
+async function handleDocumentStorageRequest(
+  source: Window,
+  origin: string,
+  message: Extract<DashboardMessage, { type: 'DOCUMENT_STORAGE_REQUEST' }>
+): Promise<void> {
+  const {
+    requestId,
+    ephemeralDID,
+    originalDocumentDID,
+    title,
+    overallClassification,
+    encryptedContent,
+    encryptionInfo,
+    sectionSummary,
+    expiresAt,
+    accessRights,
+    sourceInfo
+  } = message;
+
+  console.log(`📦 [SecureDashboardBridge] Document storage request: ${title}`);
+  console.log(`   Ephemeral DID: ${ephemeralDID.substring(0, 50)}...`);
+  console.log(`   Format: ${sourceInfo.format}`);
+  console.log(`   Expires: ${expiresAt}`);
+
+  try {
+    // Import documentStorage to store in IndexedDB
+    const { storeDocument } = await import('./documentStorage');
+
+    // Convert base64 encrypted content to ArrayBuffer
+    const binaryString = atob(encryptedContent);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    const encryptedBuffer = bytes.buffer;
+
+    // Map section summary to expected format
+    const mappedSectionSummary = {
+      totalSections: sectionSummary.total,
+      visibleCount: sectionSummary.visible,
+      redactedCount: sectionSummary.redacted,
+      clearanceLevelsUsed: [overallClassification], // Simplified
+      visibleSections: [],  // Dashboard doesn't send detailed section info
+      redactedSections: []  // Dashboard doesn't send detailed section info
+    };
+
+    // Build StoredDocument for IndexedDB
+    const storedDocument = {
+      ephemeralDID,
+      originalDocumentDID,
+      title,
+      overallClassification,
+      encryptedContent: encryptedBuffer,
+      encryptionInfo: {
+        serverPublicKey: encryptionInfo.serverPublicKey,
+        nonce: encryptionInfo.nonce,
+        algorithm: encryptionInfo.algorithm
+      },
+      sectionSummary: mappedSectionSummary,
+      sourceInfo: {
+        filename: sourceInfo.filename,
+        format: sourceInfo.format
+      },
+      receivedAt: new Date().toISOString(),
+      expiresAt,
+      viewCount: 0,
+      maxViews: accessRights.viewsAllowed,
+      status: 'active' as const
+    };
+
+    // Store in IndexedDB using documentStorage
+    await storeDocument(storedDocument);
+
+    console.log(`✅ [SecureDashboardBridge] Document stored in IndexedDB: ${ephemeralDID}`);
+
+    // Send success response
+    source.postMessage({
+      type: 'DOCUMENT_STORAGE_RESPONSE',
+      requestId,
+      success: true,
+      ephemeralDID,
+      message: 'Document stored successfully',
+      timestamp: Date.now()
+    }, origin);
+
+  } catch (error) {
+    console.error(`❌ [SecureDashboardBridge] Document storage failed:`, error);
+
+    source.postMessage({
+      type: 'DOCUMENT_STORAGE_ERROR',
+      requestId,
+      error: error instanceof Error ? error.message : 'Failed to store document',
+      timestamp: Date.now()
+    }, origin);
+  }
+}
+
+/**
+ * Handle OPEN_DOCUMENT request from dashboard
+ * Opens the document viewer for a stored document
+ */
+async function handleOpenDocumentRequest(
+  source: Window,
+  origin: string,
+  message: Extract<DashboardMessage, { type: 'OPEN_DOCUMENT' }>
+): Promise<void> {
+  const { requestId, ephemeralDID, title, sourceInfo } = message;
+
+  console.log(`📖 [SecureDashboardBridge] Open document request: ${title}`);
+  console.log(`   Ephemeral DID: ${ephemeralDID.substring(0, 50)}...`);
+  console.log(`   Format: ${sourceInfo.format}`);
+
+  try {
+    // Store the document to open in a global variable
+    // (The document viewer page will read this)
+    (window as any).__documentToOpen = {
+      ephemeralDID,
+      title,
+      sourceInfo,
+      openedAt: Date.now()
+    };
+
+    // Navigate to the document viewer page
+    // Using hash-based routing to not reload the app
+    const viewerUrl = `/my-documents?view=${encodeURIComponent(ephemeralDID)}`;
+
+    // If we're in a popup, navigate there
+    // If we're the main window, open a new viewer
+    if (window.location.pathname.includes('dashboard-decrypt') ||
+        window.opener) {
+      // This is a popup window - navigate within it
+      window.location.href = viewerUrl;
+    } else {
+      // Main window - open viewer
+      window.location.href = viewerUrl;
+    }
+
+    // Send acknowledgment
+    source.postMessage({
+      type: 'DOCUMENT_VIEWER_OPENED',
+      requestId,
+      success: true,
+      viewerUrl,
+      timestamp: Date.now()
+    }, origin);
+
+  } catch (error) {
+    console.error(`❌ [SecureDashboardBridge] Open document failed:`, error);
+
+    source.postMessage({
+      type: 'DOCUMENT_VIEWER_ERROR',
+      requestId,
+      error: error instanceof Error ? error.message : 'Failed to open document viewer',
+      timestamp: Date.now()
+    }, origin);
+  }
+}
+
+/**
+ * Handle SSI_DOCUMENT_DOWNLOAD_REQUEST from Employee Portal Dashboard
+ *
+ * SSI-compliant document download flow (SIMPLIFIED Dec 13, 2025):
+ * 1. Call prepare-download endpoint (server creates ephemeral DID)
+ * 2. Generate wallet's own X25519 keypair for decryption
+ * 3. Call complete-download with wallet's public key
+ * 4. Server encrypts document and issues DocumentCopy VC via DIDComm
+ *
+ * NOTE: Server now creates the ephemeral DID because:
+ * - Wallet's ServiceConfiguration VC points to Enterprise Agent (8200)
+ * - 8200 is for company wallets (issues credentials FROM)
+ * - Server has access to Employee Agent (8300) for employee DIDs
+ */
+async function handleSSIDocumentDownloadRequest(
+  source: Window,
+  origin: string,
+  message: Extract<DashboardMessage, { type: 'SSI_DOCUMENT_DOWNLOAD_REQUEST' }>
+): Promise<void> {
+  const { requestId, documentDID, title, sessionId, serverBaseUrl } = message;
+
+  console.log(`📥 [SecureDashboardBridge] SSI Document Download request for: ${documentDID.substring(0, 50)}...`);
+  console.log(`📥 [SecureDashboardBridge] Server base URL: ${serverBaseUrl}`);
+
+  try {
+    // Step 1: Call prepare-download endpoint (server creates ephemeral DID now)
+    console.log('📥 [SecureDashboardBridge] Step 1: Calling prepare-download endpoint...');
+    const prepareResponse = await fetch(
+      `${serverBaseUrl}/api/employee-portal/documents/prepare-download/${encodeURIComponent(documentDID)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-ID': sessionId
+        }
+      }
+    );
+
+    if (!prepareResponse.ok) {
+      const errorData = await prepareResponse.json().catch(() => ({}));
+      throw new Error(errorData.error || `Prepare download failed: ${prepareResponse.status}`);
+    }
+
+    const prepareData = await prepareResponse.json();
+    console.log('📥 [SecureDashboardBridge] Server prepared download:', {
+      storageId: prepareData.storageId,
+      ephemeralDID: prepareData.ephemeralDID?.substring(0, 50) + '...',
+      expiresAt: prepareData.expiresAt
+    });
+
+    // Server now provides ephemeral DID - no wallet-side creation needed!
+    const ephemeralDID = prepareData.ephemeralDID;
+    if (!ephemeralDID) {
+      throw new Error('Server did not return ephemeral DID. Please check server logs.');
+    }
+
+    // Step 2: Generate wallet's own X25519 keypair for decryption
+    console.log('📥 [SecureDashboardBridge] Step 2: Generating wallet X25519 keypair...');
+
+    // Dynamic import of tweetnacl for key generation
+    const nacl = await import('tweetnacl');
+    const walletKeyPair = nacl.box.keyPair();
+    const walletPublicKey = Buffer.from(walletKeyPair.publicKey).toString('base64');
+
+    console.log('📥 [SecureDashboardBridge] Wallet X25519 keypair generated');
+
+    // Store wallet's private key for later decryption (using ephemeralDID as key)
+    const { setItem, getItem } = await import('./prefixedStorage');
+
+    const keyName1 = `ephemeral-key-${ephemeralDID}`;
+    const keyName2 = `ephemeral-key-${prepareData.storageId}`;
+    console.log('📥 [SecureDashboardBridge] Storing key with name:', keyName1);
+    console.log('📥 [SecureDashboardBridge] Storing key with name:', keyName2);
+
+    // Store by ephemeralDID so viewer can look it up
+    setItem(keyName1, {
+      secretKey: Buffer.from(walletKeyPair.secretKey).toString('base64'),
+      publicKey: walletPublicKey,
+      ephemeralDID,
+      storageId: prepareData.storageId,
+      createdAt: Date.now()
+    });
+    // Also store by storageId for backward compatibility
+    setItem(keyName2, {
+      secretKey: Buffer.from(walletKeyPair.secretKey).toString('base64'),
+      publicKey: walletPublicKey,
+      ephemeralDID,
+      storageId: prepareData.storageId,
+      createdAt: Date.now()
+    });
+
+    // Verify keys were stored correctly
+    const verify1 = getItem(keyName1);
+    const verify2 = getItem(keyName2);
+    console.log('📥 [SecureDashboardBridge] Verification - key1 stored:', !!verify1?.secretKey);
+    console.log('📥 [SecureDashboardBridge] Verification - key2 stored:', !!verify2?.secretKey);
+    console.log('📥 [SecureDashboardBridge] Wallet keypair stored for later decryption (by ephemeralDID and storageId)');
+
+    // Store document metadata in IndexedDB for "My Documents" page
+    const storedDoc: StoredDocument = {
+      ephemeralDID,
+      originalDocumentDID: documentDID,
+      title: title || 'Untitled Document',
+      overallClassification: prepareData.documentMetadata?.classification || 'UNCLASSIFIED',
+      encryptedContent: new ArrayBuffer(0), // Content fetched on-demand from service endpoint
+      encryptionInfo: {
+        serverPublicKey: prepareData.ephemeralX25519PublicKey || '',
+        nonce: '', // Populated when fetching from service endpoint
+        algorithm: 'X25519-XSalsa20-Poly1305'
+      },
+      serviceEndpoint: prepareData.serviceEndpointUrl,
+      isServiceEndpointMode: true, // Content must be fetched from serviceEndpoint
+      sectionSummary: {
+        totalSections: prepareData.documentMetadata?.sectionSummary?.totalSections || 0,
+        visibleCount: prepareData.documentMetadata?.sectionSummary?.visibleCount || 0,
+        redactedCount: prepareData.documentMetadata?.sectionSummary?.redactedCount || 0,
+        clearanceLevelsUsed: [],
+        visibleSections: [],
+        redactedSections: []
+      },
+      sourceInfo: {
+        filename: title || 'document',
+        format: prepareData.documentMetadata?.format || 'html'
+      },
+      receivedAt: new Date().toISOString(),
+      expiresAt: prepareData.expiresAt,
+      viewCount: 0,
+      maxViews: -1, // Unlimited views (time-based TTL only)
+      status: 'active' as DocumentStatus
+    };
+
+    console.log('📥 [SecureDashboardBridge] Document format from server:', prepareData.documentMetadata?.format);
+    console.log('📥 [SecureDashboardBridge] Stored format:', storedDoc.sourceInfo.format);
+
+    await storeDocument(storedDoc);
+    console.log('📥 [SecureDashboardBridge] Document stored in IndexedDB for My Documents page');
+
+    // Step 3: Complete download - send wallet's public key to server
+    console.log('📥 [SecureDashboardBridge] Step 3: Completing download...');
+    const completeResponse = await fetch(
+      `${serverBaseUrl}/api/employee-portal/documents/complete-download/${prepareData.storageId}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-ID': sessionId
+        },
+        body: JSON.stringify({
+          x25519PublicKey: walletPublicKey // Wallet's key for encryption
+        })
+      }
+    );
+
+    if (!completeResponse.ok) {
+      const errorData = await completeResponse.json().catch(() => ({}));
+      throw new Error(errorData.error || `Complete download failed: ${completeResponse.status}`);
+    }
+
+    const completeData = await completeResponse.json();
+    console.log('📥 [SecureDashboardBridge] Document download completed:', {
+      ephemeralDID: ephemeralDID?.substring(0, 50) + '...',
+      credentialOfferId: completeData.credentialOfferId
+    });
+
+    // Send success response back to dashboard
+    source.postMessage({
+      type: 'SSI_DOCUMENT_DOWNLOAD_RESPONSE',
+      requestId,
+      success: true,
+      ephemeralDID,
+      storageId: prepareData.storageId, // Include for document retrieval
+      credentialOfferId: completeData.credentialOfferId,
+      expiresAt: prepareData.expiresAt,
+      message: completeData.message || 'DocumentCopy VC will be delivered via DIDComm',
+      timestamp: Date.now()
+    }, origin);
+
+    console.log('✅ [SecureDashboardBridge] SSI Document Download completed successfully');
+
+  } catch (error) {
+    console.error('❌ [SecureDashboardBridge] SSI Document Download failed:', error);
+
+    source.postMessage({
+      type: 'SSI_DOCUMENT_DOWNLOAD_RESPONSE',
+      requestId,
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error during document download',
+      timestamp: Date.now()
+    }, origin);
+  }
+}
+
+/**
+ * Get stored classified documents
+ * @returns Array of document metadata
+ */
+export function getStoredClassifiedDocuments(): any[] {
+  try {
+    const indexKey = 'classified-documents-index';
+    const indexStr = getItem(indexKey);
+
+    if (!indexStr) {
+      return [];
+    }
+
+    const index = JSON.parse(indexStr);
+    const documents: any[] = [];
+
+    for (const ephemeralDID of index) {
+      const storageKey = `classified-document-${ephemeralDID}`;
+      const docStr = getItem(storageKey);
+
+      if (docStr) {
+        const doc = JSON.parse(docStr);
+
+        // Check if expired
+        const now = new Date();
+        const expiresAt = new Date(doc.expiresAt);
+
+        if (expiresAt > now) {
+          documents.push(doc);
+        } else {
+          // Document expired - mark as expired but still include
+          doc.status = 'expired';
+          documents.push(doc);
+        }
+      }
+    }
+
+    return documents;
+  } catch (error) {
+    console.error('[SecureDashboardBridge] Failed to get stored documents:', error);
+    return [];
+  }
+}
+
+/**
+ * Get a single stored classified document by ephemeral DID
+ * @param ephemeralDID - The document's ephemeral DID
+ * @returns Document data or null if not found
+ */
+export function getStoredClassifiedDocument(ephemeralDID: string): any | null {
+  try {
+    const storageKey = `classified-document-${ephemeralDID}`;
+    const docStr = getItem(storageKey);
+
+    if (!docStr) {
+      return null;
+    }
+
+    return JSON.parse(docStr);
+  } catch (error) {
+    console.error('[SecureDashboardBridge] Failed to get stored document:', error);
+    return null;
+  }
+}
+
+/**
+ * Remove an expired or viewed document
+ * @param ephemeralDID - The document's ephemeral DID
+ */
+export function removeStoredDocument(ephemeralDID: string): void {
+  try {
+    const { removeItem, setItem } = require('./prefixedStorage');
+
+    // Remove document
+    const storageKey = `classified-document-${ephemeralDID}`;
+    removeItem(storageKey);
+
+    // Update index
+    const indexKey = 'classified-documents-index';
+    const indexStr = getItem(indexKey);
+
+    if (indexStr) {
+      const index = JSON.parse(indexStr);
+      const newIndex = index.filter((id: string) => id !== ephemeralDID);
+      setItem(indexKey, JSON.stringify(newIndex));
+    }
+
+    console.log(`🗑️ [SecureDashboardBridge] Removed document: ${ephemeralDID}`);
+  } catch (error) {
+    console.error('[SecureDashboardBridge] Failed to remove document:', error);
   }
 }
 

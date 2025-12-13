@@ -8,7 +8,7 @@
  * Purpose: Support grouped credential display with type-specific layouts
  */
 
-export type CredentialType = 'RealPersonIdentity' | 'SecurityClearance' | 'ServiceConfiguration' | 'EmployeeRole' | 'CISTrainingCertificate' | 'Unknown';
+export type CredentialType = 'RealPersonIdentity' | 'SecurityClearance' | 'ServiceConfiguration' | 'EmployeeRole' | 'CISTrainingCertificate' | 'DocumentCopy' | 'Unknown';
 export type ClearanceLevel = 'INTERNAL' | 'CONFIDENTIAL' | 'RESTRICTED' | 'TOP-SECRET';
 export type ClearanceColor = 'green' | 'blue' | 'orange' | 'red' | 'gray';
 
@@ -35,6 +35,7 @@ export function getCredentialType(credential: any): CredentialType {
   if (subjectType === 'ServiceConfiguration') return 'ServiceConfiguration';
   if (subjectType === 'EmployeeRole') return 'EmployeeRole';
   if (subjectType === 'CISTrainingCertificate') return 'CISTrainingCertificate';
+  if (subjectType === 'DocumentCopy') return 'DocumentCopy';
 
   // Check claims[0].credentialType (alternative location)
   const claimsType = credential.claims?.[0]?.credentialType;
@@ -43,6 +44,7 @@ export function getCredentialType(credential: any): CredentialType {
   if (claimsType === 'ServiceConfiguration') return 'ServiceConfiguration';
   if (claimsType === 'EmployeeRole') return 'EmployeeRole';
   if (claimsType === 'CISTrainingCertificate') return 'CISTrainingCertificate';
+  if (claimsType === 'DocumentCopy') return 'DocumentCopy';
 
   // Check vc.credentialSubject.credentialType (JWT format)
   const vcType = credential.vc?.credentialSubject?.credentialType;
@@ -51,6 +53,7 @@ export function getCredentialType(credential: any): CredentialType {
   if (vcType === 'ServiceConfiguration') return 'ServiceConfiguration';
   if (vcType === 'EmployeeRole') return 'EmployeeRole';
   if (vcType === 'CISTrainingCertificate') return 'CISTrainingCertificate';
+  if (vcType === 'DocumentCopy') return 'DocumentCopy';
 
   // Check vc.type array for ServiceConfiguration (W3C VC format)
   const vcTypeArray = credential.vc?.type || credential.type;
@@ -75,6 +78,11 @@ export function getCredentialType(credential: any): CredentialType {
   // Detect CISTrainingCertificate by field signature (certificateNumber + trainingYear + completionDate)
   if (subject?.certificateNumber && subject?.trainingYear && subject?.completionDate) {
     return 'CISTrainingCertificate';
+  }
+
+  // Detect DocumentCopy by field signature (ephemeralDID + ephemeralServiceEndpoint)
+  if (subject?.ephemeralDID && subject?.ephemeralServiceEndpoint) {
+    return 'DocumentCopy';
   }
 
   console.warn('[credentialTypeDetector] Could not determine credential type:', credential);
@@ -247,4 +255,90 @@ export function sortCredentialsAlphabetically(credentials: any[]): any[] {
     const nameB = getCredentialHolderName(b).toLowerCase();
     return nameA.localeCompare(nameB);
   });
+}
+
+/**
+ * Document Copy credential information
+ */
+export interface DocumentCopyInfo {
+  ephemeralDID: string;
+  ephemeralServiceEndpoint: string;
+  originalDocumentDID: string;
+  title: string;
+  classification: string;
+  clearanceLevelGranted: string;
+  redactedSectionCount: number;
+  visibleSectionCount: number;
+  expiresAt: string;
+  viewsAllowed: number;
+  isExpired: boolean;
+  timeRemaining: string;
+}
+
+/**
+ * Extract DocumentCopy information from credential
+ *
+ * @param credential - DocumentCopy credential object
+ * @returns DocumentCopyInfo object or null if not a DocumentCopy credential
+ */
+export function getDocumentCopyInfo(credential: any): DocumentCopyInfo | null {
+  if (!credential) return null;
+
+  const subject = credential.credentialSubject || credential.claims?.[0] || credential.vc?.credentialSubject;
+  if (!subject) return null;
+
+  // Check if this is a DocumentCopy credential
+  if (!subject.ephemeralDID || !subject.ephemeralServiceEndpoint) {
+    return null;
+  }
+
+  // Parse expiration
+  const expiresAt = subject.expiresAt || credential.expirationDate;
+  const expiryDate = expiresAt ? new Date(expiresAt) : null;
+  const now = new Date();
+  const isExpired = expiryDate ? expiryDate < now : false;
+
+  // Calculate time remaining
+  let timeRemaining = 'Unknown';
+  if (expiryDate && !isExpired) {
+    const diffMs = expiryDate.getTime() - now.getTime();
+    const diffMins = Math.floor(diffMs / (60 * 1000));
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffDays > 0) {
+      timeRemaining = `${diffDays}d ${diffHours % 24}h`;
+    } else if (diffHours > 0) {
+      timeRemaining = `${diffHours}h ${diffMins % 60}m`;
+    } else {
+      timeRemaining = `${diffMins}m`;
+    }
+  } else if (isExpired) {
+    timeRemaining = 'EXPIRED';
+  }
+
+  return {
+    ephemeralDID: subject.ephemeralDID,
+    ephemeralServiceEndpoint: subject.ephemeralServiceEndpoint,
+    originalDocumentDID: subject.originalDocumentDID || '',
+    title: subject.title || 'Untitled Document',
+    classification: subject.classification || 'UNCLASSIFIED',
+    clearanceLevelGranted: subject.clearanceLevelGranted || 'UNCLASSIFIED',
+    redactedSectionCount: subject.redactedSectionCount || 0,
+    visibleSectionCount: subject.visibleSectionCount || 0,
+    expiresAt: expiresAt || '',
+    viewsAllowed: subject.viewsAllowed ?? -1,
+    isExpired,
+    timeRemaining
+  };
+}
+
+/**
+ * Filter credentials to get only DocumentCopy credentials
+ *
+ * @param credentials - Array of credential objects
+ * @returns Array of credentials that are DocumentCopy type
+ */
+export function filterDocumentCopyCredentials(credentials: any[]): any[] {
+  return credentials.filter(cred => getCredentialType(cred) === 'DocumentCopy');
 }

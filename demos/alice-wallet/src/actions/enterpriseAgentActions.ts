@@ -692,3 +692,217 @@ export const pollPendingCredentialOffers = createAsyncThunk(
     }
   }
 );
+
+/**
+ * Create ephemeral DID for document access
+ *
+ * Creates a PRISM DID with X25519 key and service endpoint for SSI-compliant
+ * document delivery. The wallet controls the private key for decryption.
+ *
+ * @param params - Document access parameters
+ * @returns Created ephemeral DID info with public key
+ */
+export const createEphemeralDIDForDocument = createAsyncThunk(
+  'enterpriseAgent/createEphemeralDIDForDocument',
+  async (
+    params: {
+      serviceEndpointUrl: string;
+      storageId: string;
+      expiresAt: string;
+    },
+    { dispatch, getState }
+  ) => {
+    try {
+      // Get client from Redux state
+      const state: any = getState();
+      const client: EnterpriseAgentClient | null = state.enterpriseAgent?.client;
+
+      if (!client) {
+        throw new Error('No enterprise agent client available');
+      }
+
+      console.log('[EnterpriseAgentActions] Creating ephemeral DID for document:', params.storageId);
+
+      // Create ephemeral DID with service endpoint via Employee Cloud Agent (8300)
+      const createResponse = await client.createEphemeralDIDWithServiceEndpoint(
+        params.serviceEndpointUrl,
+        params.storageId,
+        params.expiresAt
+      );
+
+      if (!createResponse.success || !createResponse.data) {
+        throw new Error(createResponse.error || 'Failed to create ephemeral DID');
+      }
+
+      const createdDID = createResponse.data;
+      console.log('[EnterpriseAgentActions] Created ephemeral DID:', createdDID.did || createdDID.longFormDid);
+
+      // Extract X25519 public key from the created DID
+      // The Cloud Agent creates the key and returns it in the response
+      let x25519PublicKey: string | null = null;
+
+      if (createdDID.publicKeys && createdDID.publicKeys.length > 0) {
+        const keyAgreementKey = createdDID.publicKeys.find(
+          (key: any) => key.purpose === 'keyAgreement'
+        );
+
+        if (keyAgreementKey?.publicKeyJwk?.x) {
+          // Extract the X coordinate (raw public key in base64url)
+          x25519PublicKey = keyAgreementKey.publicKeyJwk.x;
+          console.log('[EnterpriseAgentActions] Extracted X25519 public key from DID');
+        }
+      }
+
+      // If public key not in create response, resolve the full DID document
+      if (!x25519PublicKey) {
+        const didToResolve = createdDID.longFormDid || createdDID.did;
+        console.log('[EnterpriseAgentActions] Resolving DID document for public key:', didToResolve);
+
+        const didDocResponse = await client.getDIDDocument(didToResolve);
+
+        if (didDocResponse.success && didDocResponse.data) {
+          const didDocument = didDocResponse.data;
+
+          // Look for X25519 key in keyAgreement
+          if (didDocument.keyAgreement && didDocument.keyAgreement.length > 0) {
+            const keyAgreementRef = didDocument.keyAgreement[0];
+            const keyId = typeof keyAgreementRef === 'string' ? keyAgreementRef : keyAgreementRef.id;
+
+            // Find the verification method
+            const verificationMethods = didDocument.verificationMethod || [];
+            const keyMethod = verificationMethods.find(
+              (vm: any) => vm.id === keyId || vm.id.endsWith(keyId)
+            );
+
+            if (keyMethod?.publicKeyJwk?.x) {
+              x25519PublicKey = keyMethod.publicKeyJwk.x;
+            } else if (keyMethod?.publicKeyBase58) {
+              // Convert base58 to base64url if needed
+              x25519PublicKey = keyMethod.publicKeyBase58;
+            }
+          }
+        }
+      }
+
+      if (!x25519PublicKey) {
+        throw new Error('Failed to extract X25519 public key from ephemeral DID');
+      }
+
+      // Refresh DIDs list
+      dispatch(refreshEnterpriseDIDs());
+
+      return {
+        ephemeralDID: createdDID.longFormDid || createdDID.did,
+        x25519PublicKey,
+        status: createdDID.status,
+        storageId: params.storageId
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to create ephemeral DID';
+      console.error('[EnterpriseAgentActions] Error creating ephemeral DID:', error);
+      dispatch(setError(errorMsg));
+      throw error;
+    }
+  }
+);
+
+/**
+ * Initiate SSI-compliant document download
+ *
+ * Complete two-step flow for downloading a classified document:
+ * 1. Request prepare-download from server (gets storage ID + service URL)
+ * 2. Create ephemeral DID via Employee CA with service endpoint
+ * 3. Complete download by sending public key to server
+ * 4. Server encrypts document and issues DocumentCopy VC via DIDComm
+ *
+ * @param params - Document download parameters
+ * @returns Download result with ephemeral DID
+ */
+export const initiateDocumentDownload = createAsyncThunk(
+  'enterpriseAgent/initiateDocumentDownload',
+  async (
+    params: {
+      documentDID: string;
+      serverBaseUrl: string;
+      sessionId: string;
+    },
+    { dispatch, getState }
+  ) => {
+    try {
+      console.log('[EnterpriseAgentActions] Initiating SSI document download:', params.documentDID);
+
+      // Step 1: Prepare download - get storage ID and service URL from server
+      const prepareResponse = await fetch(
+        `${params.serverBaseUrl}/api/employee-portal/documents/prepare-download/${encodeURIComponent(params.documentDID)}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-ID': params.sessionId
+          }
+        }
+      );
+
+      if (!prepareResponse.ok) {
+        const errorData = await prepareResponse.json().catch(() => ({}));
+        throw new Error(errorData.error || `Prepare download failed: ${prepareResponse.status}`);
+      }
+
+      const prepareData = await prepareResponse.json();
+      console.log('[EnterpriseAgentActions] Prepared download:', {
+        storageId: prepareData.storageId,
+        serviceEndpointUrl: prepareData.serviceEndpointUrl
+      });
+
+      // Step 2: Create ephemeral DID via Employee Cloud Agent (8300)
+      const ephemeralDIDResult = await dispatch(createEphemeralDIDForDocument({
+        serviceEndpointUrl: prepareData.serviceEndpointUrl,
+        storageId: prepareData.storageId,
+        expiresAt: prepareData.expiresAt
+      })).unwrap();
+
+      console.log('[EnterpriseAgentActions] Created ephemeral DID:', ephemeralDIDResult.ephemeralDID);
+
+      // Step 3: Complete download - send ephemeral DID and public key to server
+      const completeResponse = await fetch(
+        `${params.serverBaseUrl}/api/employee-portal/documents/complete-download/${prepareData.storageId}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-ID': params.sessionId
+          },
+          body: JSON.stringify({
+            ephemeralDID: ephemeralDIDResult.ephemeralDID,
+            x25519PublicKey: ephemeralDIDResult.x25519PublicKey
+          })
+        }
+      );
+
+      if (!completeResponse.ok) {
+        const errorData = await completeResponse.json().catch(() => ({}));
+        throw new Error(errorData.error || `Complete download failed: ${completeResponse.status}`);
+      }
+
+      const completeData = await completeResponse.json();
+      console.log('[EnterpriseAgentActions] Document download completed:', {
+        ephemeralDID: ephemeralDIDResult.ephemeralDID,
+        credentialOfferId: completeData.credentialOfferId
+      });
+
+      return {
+        success: true,
+        ephemeralDID: ephemeralDIDResult.ephemeralDID,
+        documentDID: params.documentDID,
+        credentialOfferId: completeData.credentialOfferId,
+        expiresAt: prepareData.expiresAt,
+        message: completeData.message || 'DocumentCopy VC will be delivered via DIDComm'
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to initiate document download';
+      console.error('[EnterpriseAgentActions] Error initiating document download:', error);
+      dispatch(setError(errorMsg));
+      throw error;
+    }
+  }
+);

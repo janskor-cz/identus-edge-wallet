@@ -179,6 +179,14 @@ export function PageHeader({ children }) {
                     </li>
                     <li>
                         <Link
+                            href="/my-documents"
+                            className="px-4 py-2 hover:bg-gray-700 rounded"
+                        >
+                            My Docs
+                        </Link>
+                    </li>
+                    <li>
+                        <Link
                             href="/messages"
                             className="px-4 py-2 hover:bg-gray-700 rounded"
                         >
@@ -233,6 +241,14 @@ export function PageHeader({ children }) {
                                 className="inline-block w-full px-4 py-2"
                             >
                                 DIDs
+                            </Link>
+                        </li>
+                        <li className="px-5 py-3 hover:bg-gray-700 rounded-lg">
+                            <Link
+                                href="/my-documents"
+                                className="inline-block w-full px-4 py-2"
+                            >
+                                My Docs
                             </Link>
                         </li>
                         <li className="px-5 py-3 hover:bg-gray-700 rounded-lg">
