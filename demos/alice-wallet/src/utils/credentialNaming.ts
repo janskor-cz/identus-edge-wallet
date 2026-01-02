@@ -1,13 +1,16 @@
+import { getCredentialSubject } from './credentialTypeDetector';
+
 /**
  * Extracts a user-friendly display name from a credential
  * Now includes credential type and expiration date for better UX
  *
  * Priority order:
  * 1. firstName + lastName + credentialType + expiration
- * 2. uniqueId + credentialType
- * 3. Subject ID (shortened)
- * 4. Issuer DID (shortened)
- * 5. "Unnamed Credential"
+ * 2. holderName + credentialType + expiration (SecurityClearance)
+ * 3. uniqueId + credentialType
+ * 4. Subject ID (shortened)
+ * 5. Issuer DID (shortened)
+ * 6. "Unnamed Credential"
  */
 export function extractCredentialDisplayName(credential: any): string {
   try {
@@ -15,9 +18,14 @@ export function extractCredentialDisplayName(credential: any): string {
     let credentialType = '';
     let expiryInfo = '';
 
-    // Check credentialSubject for person fields
-    if (credential.credentialSubject) {
-      const subject = credential.credentialSubject;
+    // Use getCredentialSubject to handle all credential formats:
+    // - SDK JWTCredential with properties Map
+    // - Direct credentialSubject property
+    // - claims array
+    // - vc.credentialSubject
+    const subject = getCredentialSubject(credential);
+
+    if (subject) {
 
       // Extract credential type if available
       if (subject.credentialType) {
@@ -25,7 +33,12 @@ export function extractCredentialDisplayName(credential: any): string {
         if (subject.credentialType === 'RealPersonIdentity') {
           credentialType = ' (ID)';
         } else if (subject.credentialType === 'SecurityClearance') {
-          credentialType = ' (Clearance)';
+          // Show clearance level instead of generic "(Clearance)"
+          if (subject.clearanceLevel) {
+            credentialType = ` (${subject.clearanceLevel})`;
+          } else {
+            credentialType = ' (Clearance)';
+          }
         } else {
           credentialType = ` (${subject.credentialType})`;
         }
@@ -68,6 +81,12 @@ export function extractCredentialDisplayName(credential: any): string {
         return `${displayName}${credentialType}${expiryInfo}`;
       }
 
+      // Priority 2.5: holderName (used in SecurityClearance)
+      if (subject.holderName) {
+        displayName = subject.holderName;
+        return `${displayName}${credentialType}${expiryInfo}`;
+      }
+
       // Priority 3: uniqueId with type
       if (subject.uniqueId) {
         return `ID: ${subject.uniqueId}${credentialType}${expiryInfo}`;
@@ -93,7 +112,12 @@ export function extractCredentialDisplayName(credential: any): string {
           if (claim.credentialType === 'RealPersonIdentity') {
             credentialType = ' (ID)';
           } else if (claim.credentialType === 'SecurityClearance') {
-            credentialType = ' (Clearance)';
+            // For SecurityClearance, show the clearance level instead of generic "(Clearance)"
+            if (claim.clearanceLevel) {
+              credentialType = ` (${claim.clearanceLevel})`;
+            } else {
+              credentialType = ' (Clearance)';
+            }
           } else {
             credentialType = ` (${claim.credentialType})`;
           }
@@ -129,6 +153,11 @@ export function extractCredentialDisplayName(credential: any): string {
         }
         if (claim.firstName) {
           displayName = claim.firstName;
+          return `${displayName}${credentialType}${expiryInfo}`;
+        }
+        // Check holderName (used in SecurityClearance)
+        if (claim.holderName) {
+          displayName = claim.holderName;
           return `${displayName}${credentialType}${expiryInfo}`;
         }
         if (claim.uniqueId) {
