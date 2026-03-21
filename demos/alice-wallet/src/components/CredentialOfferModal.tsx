@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useMountedApp } from '@/reducers/store';
+import { useMountedApp, useAppSelector } from '@/reducers/store';
 import SDK from '@hyperledger/identus-edge-agent-sdk';
+import { DIDSelectionModal } from './DIDSelectionModal';
 
 /**
  * CredentialOfferModal Component
@@ -66,14 +67,21 @@ export const CredentialOfferModal: React.FC = () => {
         })
         .filter((offer): offer is CredentialOfferData => offer !== null && offer.credentialPreview !== undefined);
 
+    // Get existing PRISM DIDs from Redux store
+    const prismDIDs = useAppSelector(state => state.app.prismDIDs) || [];
+
     // Local state
     const [isProcessing, setIsProcessing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [showDIDSelection, setShowDIDSelection] = useState(false);
+    const [pendingOffer, setPendingOffer] = useState<CredentialOfferData | null>(null);
 
     // Reset error when offers change
     useEffect(() => {
         setError(null);
         setIsProcessing(false);
+        setShowDIDSelection(false);
+        setPendingOffer(null);
     }, [pendingOffers.length]);
 
     // Don't render modal until agent has fully started (prevents blocking initialization)
@@ -87,21 +95,54 @@ export const CredentialOfferModal: React.FC = () => {
     // Show first pending offer (FIFO)
     const currentOffer = pendingOffers[0];
 
-    const handleAccept = async () => {
+    /**
+     * Show DID selection modal when user clicks Accept
+     * If there are existing credential DIDs, let user choose
+     */
+    const handleAcceptClick = () => {
         if (!app.agent?.instance || isProcessing) return;
 
+        // Show all PRISM DIDs (including CA connection DID) for user selection
+        const credentialDIDs = prismDIDs;
+
+        if (credentialDIDs.length > 0) {
+            // Show DID selection modal
+            setPendingOffer(currentOffer);
+            setShowDIDSelection(true);
+        } else {
+            // No existing DIDs, proceed directly with new DID creation
+            handleAcceptWithDID(null);
+        }
+    };
+
+    /**
+     * Actually accept the credential with the selected DID
+     */
+    const handleAcceptWithDID = async (selectedDID: string | null) => {
+        if (!app.agent?.instance || isProcessing) return;
+
+        setShowDIDSelection(false);
         setIsProcessing(true);
         setError(null);
 
+        const offerToAccept = pendingOffer || currentOffer;
+
         try {
-            console.log('🟢 [CREDENTIAL OFFER] Accepting offer:', currentOffer.id);
+            console.log('🟢 [CREDENTIAL OFFER] Accepting offer:', offerToAccept.id);
+            if (selectedDID) {
+                console.log('🔄 [CREDENTIAL OFFER] Using existing DID:', selectedDID.substring(0, 50) + '...');
+            } else {
+                console.log('🆕 [CREDENTIAL OFFER] Creating new DID');
+            }
 
             await app.acceptCredentialOffer({
                 agent: app.agent.instance,
-                message: currentOffer.message
+                message: offerToAccept.message,
+                selectedDID: selectedDID || undefined
             });
 
             console.log('✅ [CREDENTIAL OFFER] Offer accepted successfully');
+            setPendingOffer(null);
 
             // Modal auto-closes because Redux state update removes message
         } catch (err) {
@@ -110,14 +151,23 @@ export const CredentialOfferModal: React.FC = () => {
 
             // Delete the failed offer message so modal doesn't reappear
             try {
-                await app.agent.instance.pluto.deleteMessage(currentOffer.id);
-                console.log('✅ [CREDENTIAL OFFER] Deleted failed offer message:', currentOffer.id);
+                await app.agent.instance.pluto.deleteMessage(offerToAccept.id);
+                console.log('✅ [CREDENTIAL OFFER] Deleted failed offer message:', offerToAccept.id);
             } catch (deleteError) {
                 console.warn('⚠️ [CREDENTIAL OFFER] Failed to delete message:', deleteError);
             }
         } finally {
             setIsProcessing(false);
+            setPendingOffer(null);
         }
+    };
+
+    /**
+     * Handle DID selection modal close (cancel)
+     */
+    const handleDIDSelectionClose = () => {
+        setShowDIDSelection(false);
+        setPendingOffer(null);
     };
 
     const handleReject = async () => {
@@ -166,6 +216,31 @@ export const CredentialOfferModal: React.FC = () => {
     const attributes = currentOffer.credentialPreview.body.attributes;
     const schemaId = currentOffer.credentialPreview.schema_id;
 
+    // Find connection name from issuer DID
+    const getConnectionName = (): string => {
+        const issuerDID = currentOffer.from;
+        // Check both host and receiver since connection structure varies
+        const connection = app.connections.find(
+            conn => conn.host.toString() === issuerDID || conn.receiver.toString() === issuerDID
+        );
+        return (connection as any)?.name || 'Unknown Issuer';
+    };
+
+    // Extract credential type from attributes
+    const getCredentialType = (): string => {
+        const typeAttr = attributes.find(
+            attr => attr.name.toLowerCase() === 'credentialtype'
+        );
+        if (typeAttr) {
+            // Convert "RealPersonIdentity" to "RealPerson Identity"
+            return typeAttr.value.replace(/([A-Z])/g, ' $1').trim();
+        }
+        return 'Verifiable';
+    };
+
+    const connectionName = getConnectionName();
+    const credentialType = getCredentialType();
+
     return (
         <div
             className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]"
@@ -180,49 +255,12 @@ export const CredentialOfferModal: React.FC = () => {
                     <div className="flex items-center space-x-3">
                         <span className="text-2xl">🎫</span>
                         <div>
-                            <h2 className="text-xl font-bold">Credential Offer</h2>
-                            <p className="text-blue-100 text-sm mt-1">
-                                An issuer is offering you a verifiable credential
-                            </p>
+                            <h2 className="text-xl font-bold">
+                                {connectionName} is offering you {credentialType} Credential
+                            </h2>
                         </div>
                     </div>
                 </div>
-
-                {/* Issuer Info */}
-                <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                    <div className="space-y-2">
-                        <div>
-                            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">From:</span>
-                            <p className="text-sm font-mono text-gray-900 dark:text-gray-100 mt-1 break-all">
-                                {formatDID(currentOffer.from)}
-                            </p>
-                        </div>
-                        <div>
-                            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Message ID:</span>
-                            <p className="text-xs font-mono text-gray-600 dark:text-gray-400 mt-1">
-                                {currentOffer.id}
-                            </p>
-                        </div>
-                        <div>
-                            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Time:</span>
-                            <p className="text-sm text-gray-700 dark:text-gray-300 mt-1">
-                                {new Date(currentOffer.timestamp).toLocaleString()}
-                            </p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Schema Info */}
-                {schemaId && (
-                    <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                        <div>
-                            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Schema ID:</span>
-                            <p className="text-xs font-mono text-gray-700 dark:text-gray-300 mt-1 break-all bg-gray-50 dark:bg-gray-900 p-2 rounded">
-                                {schemaId}
-                            </p>
-                        </div>
-                    </div>
-                )}
 
                 {/* Attributes Table */}
                 <div className="px-6 py-4">
@@ -277,6 +315,13 @@ export const CredentialOfferModal: React.FC = () => {
                     )}
                 </div>
 
+                {/* Time */}
+                <div className="px-6 pb-4">
+                    <div className="text-sm text-gray-500 dark:text-gray-400 text-right">
+                        <span className="font-medium">Received:</span> {new Date(currentOffer.timestamp).toLocaleString()}
+                    </div>
+                </div>
+
                 {/* Error Display */}
                 {error && (
                     <div className="px-6 pb-4">
@@ -301,7 +346,7 @@ export const CredentialOfferModal: React.FC = () => {
                             {isProcessing ? '⏳ Processing...' : '❌ Reject Credential'}
                         </button>
                         <button
-                            onClick={handleAccept}
+                            onClick={handleAcceptClick}
                             disabled={isProcessing || attributes.length === 0}
                             className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-green-400
                                      text-white font-medium rounded-lg transition-colors duration-200
@@ -320,6 +365,18 @@ export const CredentialOfferModal: React.FC = () => {
                     </p>
                 </div>
             </div>
+
+            {/* DID Selection Modal */}
+            <DIDSelectionModal
+                isOpen={showDIDSelection}
+                onClose={handleDIDSelectionClose}
+                onSelect={handleAcceptWithDID}
+                existingDIDs={prismDIDs.map((did: any) => ({
+                    did: did.did || did.toString(),
+                    alias: did.alias
+                }))}
+                credentialType={credentialType}
+            />
         </div>
     );
 };

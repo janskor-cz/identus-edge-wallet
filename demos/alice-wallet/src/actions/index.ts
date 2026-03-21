@@ -19,8 +19,8 @@ import { base64url } from 'jose';
 // Phase 3: Standard Message Format
 import { createEncryptedMessageBody, createPlaintextMessageBody } from '../types/StandardMessageBody';
 
-// Connection metadata for PRISM DID lookup
-import { getConnectionMetadata } from '../utils/connectionMetadata';
+// Connection metadata for PRISM DID lookup and storage
+import { getConnectionMetadata, saveConnectionMetadata } from '../utils/connectionMetadata';
 
 // SecureDashboardBridge agent setter for Pluto fallback
 import { setSecureDashboardAgent } from '../utils/SecureDashboardBridge';
@@ -91,9 +91,9 @@ export const rejectPresentationRequest = createAsyncThunk<
 
 export const createLongFormPrismDID = createAsyncThunk<
     { did: SDK.Domain.DID; privateKey: SDK.Domain.PrivateKey; ed25519Key?: SDK.Domain.PrivateKey; x25519Key?: SDK.Domain.PrivateKey },
-    { agent: any; alias?: string; defaultSeed: SDK.Domain.Seed }
+    { agent: any; alias?: string; defaultSeed: SDK.Domain.Seed; mediatorUri?: string }
 >("createLongFormPrismDID", async (options, api) => {
-    const { agent, alias, defaultSeed } = options;
+    const { agent, alias, defaultSeed, mediatorUri } = options;
     api.dispatch(reduxActions.setCreatingPrismDID(true));
 
     try {
@@ -110,10 +110,10 @@ export const createLongFormPrismDID = createAsyncThunk<
             seed: seedHex,
         });
 
-        // Create Ed25519 key for authentication/signing (used for Security Clearance signatures)
-        const ed25519Key = apollo.createPrivateKey({
+        // Create SECP256K1 key for authentication/signing (matches original SDK behavior for credential signing)
+        const authKey = apollo.createPrivateKey({
             type: SDK.Domain.KeyTypes.EC,
-            curve: SDK.Domain.Curve.ED25519,
+            curve: SDK.Domain.Curve.SECP256K1,
             seed: seedHex,
         });
 
@@ -124,29 +124,61 @@ export const createLongFormPrismDID = createAsyncThunk<
             seed: seedHex,
         });
 
-        console.log('[PRISM DID] Created Ed25519 key for authentication, curve:', ed25519Key.curve);
+        console.log('[PRISM DID] Created SECP256K1 key for authentication, curve:', authKey.curve);
         console.log('[PRISM DID] Created X25519 key for key agreement, curve:', x25519Key.curve);
 
-        // Create long-form PRISM DID with master key, Ed25519 authentication key, and X25519 key agreement key
+        // Build DIDComm service endpoint if mediator available
+        const services: SDK.Domain.Service[] = [];
+        const mediator = agent.mediationHandler?.mediator;
+        if (mediator || mediatorUri) {
+            const uri = mediatorUri || 'https://identuslabel.cz/mediator';
+            const routingKeys: string[] = [];
+
+            // Add routing DID if available from mediator
+            if (mediator?.routingDID) {
+                routingKeys.push(mediator.routingDID.toString());
+            }
+
+            // ServiceEndpoint constructor: (uri, accept, routingKeys)
+            const serviceEndpoint = new SDK.Domain.ServiceEndpoint(
+                uri,
+                ["didcomm/v2"],
+                routingKeys
+            );
+
+            // Service constructor: (id, type, serviceEndpoint)
+            const didcommService = new SDK.Domain.Service(
+                "#didcomm-1",
+                ["DIDCommMessaging"],
+                serviceEndpoint
+            );
+            services.push(didcommService);
+            console.log('[PRISM DID] Added DIDComm service endpoint:', uri);
+            if (routingKeys.length > 0) {
+                console.log('[PRISM DID] Routing keys:', routingKeys);
+            }
+        }
+
+        // Create long-form PRISM DID with master key, SECP256K1 authentication key, and X25519 key agreement key
         // Format: did:prism:[stateHash]:[encodedState]
-        // This provides a complete cryptographic identity for Security Clearance credentials
+        // SECP256K1 for authentication matches original SDK behavior - required for credential signing verification
         const prismDID = await castor.createPrismDID(
             masterKey.publicKey(),
-            [],  // no services needed for credential holder
-            [ed25519Key.publicKey()],  // Ed25519 for authentication (signing)
+            services,  // DIDComm service endpoint pointing to mediator
+            [authKey.publicKey()],  // SECP256K1 for authentication (signing) - matches SDK default
             [],  // no issuance keys
             [x25519Key.publicKey()]  // X25519 for key agreement (encryption)
         );
 
-        // Store DID with ALL private keys in Pluto (master + Ed25519 + X25519)
-        await agent.pluto.storeDID(prismDID, [masterKey, ed25519Key, x25519Key], alias);
+        // Store DID with ALL private keys in Pluto (master + auth + X25519)
+        await agent.pluto.storeDID(prismDID, [masterKey, authKey, x25519Key], alias);
 
-        console.log('[PRISM DID] Created long-form DID with Ed25519 + X25519:', prismDID.toString().substring(0, 60) + '...');
+        console.log('[PRISM DID] Created long-form DID with SECP256K1 auth + X25519:', prismDID.toString().substring(0, 60) + '...');
 
         // Refresh the list
         api.dispatch(refreshPrismDIDs({ agent }));
 
-        return api.fulfillWithValue({ did: prismDID, privateKey: masterKey, ed25519Key, x25519Key });
+        return api.fulfillWithValue({ did: prismDID, privateKey: masterKey, authKey, x25519Key });
     } catch (err) {
         console.error('[PRISM DID] Failed to create:', err);
         api.dispatch(reduxActions.setCreatingPrismDID(false));
@@ -163,7 +195,7 @@ export const refreshPrismDIDs = createAsyncThunk<
     try {
         const prismDIDObjects = await agent.pluto.getAllPrismDIDs();
         // Convert SDK PrismDID objects to serializable objects with alias preserved
-        const prismDIDs = (prismDIDObjects || []).map((prismDID: any) => {
+        const allPrismDIDs = (prismDIDObjects || []).map((prismDID: any) => {
             // PrismDID has .did property (DID object) and .alias property
             const did = prismDID?.did || prismDID;
             return {
@@ -171,7 +203,22 @@ export const refreshPrismDIDs = createAsyncThunk<
                 alias: prismDID?.alias  // Preserve alias for filtering
             };
         });
-        console.log('[PRISM DID] Refreshed list, count:', prismDIDs.length, 'with aliases:', prismDIDs.filter(d => d.alias).length);
+
+        // Deduplicate by DID string (Pluto may return duplicates when storing with multiple keys)
+        const seenDIDs = new Set<string>();
+        const prismDIDs = allPrismDIDs.filter((item: { did: string; alias?: string }) => {
+            if (seenDIDs.has(item.did)) {
+                return false; // Skip duplicate
+            }
+            seenDIDs.add(item.did);
+            return true;
+        });
+
+        const duplicatesRemoved = allPrismDIDs.length - prismDIDs.length;
+        if (duplicatesRemoved > 0) {
+            console.log('[PRISM DID] Removed', duplicatesRemoved, 'duplicate entries');
+        }
+        console.log('[PRISM DID] Refreshed list, count:', prismDIDs.length, 'with aliases:', prismDIDs.filter((d: { alias?: string }) => d.alias).length);
         api.dispatch(reduxActions.setPrismDIDs(prismDIDs));
         return api.fulfillWithValue({ prismDIDs });
     } catch (err) {
@@ -219,37 +266,45 @@ export const acceptCredentialOffer = createAsyncThunk<
     any,
     {
         agent: SDK.Agent,
-        message: SDK.Domain.Message
+        message: SDK.Domain.Message,
+        selectedDID?: string  // Optional: User-selected existing DID to reuse
     }
 >("acceptCredentialOffer", async (options, api) => {
     try {
-        const { agent, message } = options;
+        const { agent, message, selectedDID } = options;
         const credentialOffer = OfferCredential.fromMessage(message);
 
-        // Look up the PRISM DID associated with this connection
-        // credentialOffer.to is our Peer DID for this connection
-        let subjectPrismDID: SDK.Domain.DID | undefined;
-        const ourPeerDID = credentialOffer.to?.toString();
-
-        if (ourPeerDID) {
-            const connectionMetadata = getConnectionMetadata(ourPeerDID);
-            if (connectionMetadata?.prismDid) {
-                console.log(`🔗 [CREDENTIAL OFFER] Found PRISM DID for connection: ${connectionMetadata.prismDid.substring(0, 50)}...`);
-                subjectPrismDID = SDK.Domain.DID.fromString(connectionMetadata.prismDid);
-            } else {
-                console.log(`ℹ️ [CREDENTIAL OFFER] No PRISM DID found for connection ${ourPeerDID.substring(0, 40)}... - SDK will create new one`);
+        // Extract credential type from offer to use as alias for new PRISM DID
+        let alias: string | undefined;
+        try {
+            const offerAttachment = credentialOffer.attachments?.at(0);
+            if (offerAttachment?.payload) {
+                const payload = typeof offerAttachment.payload === 'string'
+                    ? JSON.parse(offerAttachment.payload)
+                    : offerAttachment.payload;
+                // Look for type in various locations in the payload
+                const vcType = payload?.credential?.type?.[1] || payload?.type?.[1] || payload?.vct;
+                if (vcType) {
+                    alias = `For ${vcType}`;
+                    console.log(`📋 [CREDENTIAL OFFER] Credential type: "${vcType}"`);
+                }
             }
-        } else {
-            console.log(`⚠️ [CREDENTIAL OFFER] No 'to' DID in credential offer - SDK will create new PRISM DID`);
+        } catch (aliasError) {
+            console.log(`📋 [CREDENTIAL OFFER] Could not extract alias from offer:`, aliasError);
         }
 
         let requestCredential;
         try {
-            // Pass the PRISM DID to use as credentialSubject.id (if found)
-            requestCredential = await agent.prepareRequestCredentialWithIssuer(
-                credentialOffer,
-                subjectPrismDID ? { subjectDID: subjectPrismDID } : undefined
-            );
+            if (selectedDID) {
+                // User chose to reuse an existing DID
+                console.log(`🔄 [CREDENTIAL OFFER] Reusing existing DID: ${selectedDID.substring(0, 50)}...`);
+                const subjectDID = SDK.Domain.DID.fromString(selectedDID);
+                requestCredential = await agent.prepareRequestCredentialWithIssuer(credentialOffer, { subjectDID });
+            } else {
+                // Create new DID with alias (default behavior)
+                console.log(`🆕 [CREDENTIAL OFFER] Creating new DID with alias: "${alias || 'none'}"`);
+                requestCredential = await agent.prepareRequestCredentialWithIssuer(credentialOffer, { alias });
+            }
         } catch (prepareError) {
             console.error('❌ [ERROR] Failed to prepare credential request:', prepareError);
             console.error('❌ [ERROR] Error type:', prepareError.constructor.name);
@@ -276,6 +331,10 @@ export const acceptCredentialOffer = createAsyncThunk<
             }
 
             console.log('✅ [CREDENTIAL OFFER] Message successfully deleted from IndexedDB:', message.id);
+
+            // Refresh PRISM DIDs list so newly created DID appears in DID Management page
+            api.dispatch(refreshPrismDIDs({ agent }));
+            console.log('🔄 [CREDENTIAL OFFER] Refreshed PRISM DIDs list');
 
         } catch (err) {
             console.error('❌ Failed to send credential request:', err);
@@ -547,7 +606,7 @@ async function handleMessages(
                         const sortedCredentials = matchingCredentials.sort((a, b) => {
                             const levelA = getVCClearanceLevel(a) || 0;
                             const levelB = getVCClearanceLevel(b) || 0;
-                            return levelB - levelA; // Descending order (TOP-SECRET=3 > SECRET=2 > CONFIDENTIAL=1)
+                            return levelB - levelA; // Descending order (TOP-SECRET=4 > RESTRICTED=3 > CONFIDENTIAL=2 > INTERNAL=1)
                         });
 
                         const selectedCredential = sortedCredentials[0];
@@ -1231,7 +1290,7 @@ function getRecipientSecurityClearanceVC(
  * Enhanced sendMessage with encryption support
  * @param content - Plaintext message content OR pre-built SDK.Domain.Message
  * @param recipientDID - Recipient's DID (required for encryption)
- * @param securityLevel - Classification level (UNCLASSIFIED by default)
+ * @param securityLevel - Classification level (INTERNAL by default)
  */
 export const sendMessage = createAsyncThunk<
     { message: SDK.Domain.Message },
@@ -1250,7 +1309,7 @@ export const sendMessage = createAsyncThunk<
             message: prebuiltMessage,
             content,
             recipientDID,
-            securityLevel = SecurityLevel.UNCLASSIFIED
+            securityLevel = SecurityLevel.INTERNAL
         } = options;
 
         let finalMessage: SDK.Domain.Message;
@@ -1269,7 +1328,7 @@ export const sendMessage = createAsyncThunk<
             const credentials = state.credentials || [];
 
             // CLASSIFIED MESSAGE: Encrypt before sending
-            if (securityLevel > SecurityLevel.UNCLASSIFIED) {
+            if (securityLevel > SecurityLevel.INTERNAL) {
                 console.log('🔒 [sendMessage] Encrypting classified message...');
 
                 // STEP 1: Get sender's Security Clearance VC
@@ -1558,7 +1617,7 @@ export const sendMessage = createAsyncThunk<
                     console.warn('⚠️ [sendMessage] Could not add extraHeaders (SDK may not support)');
                 }
             }
-            // UNCLASSIFIED MESSAGE: Send as plaintext
+            // INTERNAL MESSAGE: Send as plaintext
             else {
                 console.log('📝 [sendMessage] Sending unclassified plaintext message');
 

@@ -335,7 +335,7 @@ export function destroyKey(keyPair: EphemeralKeyPair): void {
  *   'doc-123',
  *   'did:prism:myDID',
  *   'did:prism:issuerDID',
- *   3, // SECRET clearance
+ *   3, // RESTRICTED clearance
  *   myEd25519PrivateKey
  * );
  * const response = await fetch('/api/ephemeral-documents/doc-123/access', {
@@ -436,10 +436,10 @@ export function verifySignature(
  */
 export function getClassificationLabel(level: number): string {
   const labels: { [key: number]: string } = {
-    1: 'UNCLASSIFIED',
+    1: 'INTERNAL',
     2: 'CONFIDENTIAL',
-    3: 'SECRET',
-    4: 'TOP_SECRET'
+    3: 'RESTRICTED',
+    4: 'TOP-SECRET'
   };
   return labels[level] || 'UNKNOWN';
 }
@@ -452,10 +452,14 @@ export function getClassificationLabel(level: number): string {
  */
 export function getClassificationLevel(label: string): number {
   const levels: { [key: string]: number } = {
-    'UNCLASSIFIED': 1,
+    'INTERNAL': 1,
+    'UNCLASSIFIED': 1,  // Legacy
     'CONFIDENTIAL': 2,
-    'SECRET': 3,
-    'TOP_SECRET': 4
+    'RESTRICTED': 3,
+    'SECRET': 3,  // Legacy
+    'TOP-SECRET': 4,
+    'TOP_SECRET': 4,
+    'TOPSECRET': 4
   };
   return levels[label.toUpperCase()] || 1;
 }

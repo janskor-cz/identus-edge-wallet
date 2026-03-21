@@ -14,11 +14,11 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { copyToClipboardWithLog } from "@/utils/clipboard";
 import { PageHeader } from "@/components/PageHeader";
 import { refreshConnections, deleteConnection } from "@/actions";
-import { ConnectionRequest } from "@/components/ConnectionRequest";
 import { filterConnectionMessages } from "@/utils/messageFilters";
 import { connectionRequestQueue, ConnectionRequestItem } from "@/utils/connectionRequestQueue";
 import { messageRejection } from "@/utils/rejectionManager";
-import { ConnectToCA } from "@/components/ConnectToCA";
+import { CAConnectionEnforcementModal } from "@/components/CAConnectionEnforcementModal";
+import { PendingRequestsModal } from "@/components/PendingRequestsModal";
 import { getConnectionNameWithFallback } from "@/utils/connectionNameResolver";
 import { getConnectionMetadata } from "@/utils/connectionMetadata";
 
@@ -43,6 +43,13 @@ export default function App() {
 
     // Processing flag to prevent race conditions
     const [isProcessingMessages, setIsProcessingMessages] = useState(false);
+
+    // CA connection enforcement modal state
+    const [hasCAConnection, setHasCAConnection] = useState<boolean | null>(null); // null = checking
+    const [showCAEnforcementModal, setShowCAEnforcementModal] = useState(false);
+
+    // Pending requests modal state
+    const [showPendingRequestsModal, setShowPendingRequestsModal] = useState(false);
 
     // Wallet context detection
     const [walletContext, setWalletContext] = useState<'personal' | 'enterprise' | null>(null);
@@ -125,6 +132,30 @@ export default function App() {
     useEffect(() => {
         setConnections(app.connections)
     }, [app.connections])
+
+    // Check for existing CA connection and show enforcement modal if missing
+    useEffect(() => {
+        const checkCAConnection = async () => {
+            if (!app.db.instance || !app.db.connected || !app.agent.instance) return;
+
+            try {
+                const allConnections = await app.agent.instance.pluto.getAllDidPairs();
+                const caConnection = allConnections.find(pair => {
+                    const pairName = pair.name?.toLowerCase() || '';
+                    return pairName === 'certification authority' || pairName.includes('certification');
+                });
+
+                setHasCAConnection(!!caConnection);
+                setShowCAEnforcementModal(!caConnection);
+            } catch (error) {
+                console.error('[CONNECTIONS] Error checking CA connection:', error);
+                setHasCAConnection(false);
+                setShowCAEnforcementModal(true);
+            }
+        };
+
+        checkCAConnection();
+    }, [app.db.instance, app.db.connected, app.agent.instance, connections])
 
     // Fetch enterprise connections when switching to enterprise mode
     useEffect(() => {
@@ -468,107 +499,54 @@ export default function App() {
         <>
             <div className="mx-10 mt-5 mb-30">
                 <PageHeader>
-                    <h1 className="mb-4 text-4xl font-extrabold tracking-tight leading-none text-gray-900 md:text-5xl lg:text-6xl dark:text-white">
-                        Connections
-                    </h1>
+                    <div className="flex items-center justify-between">
+                        <h1 className="mb-4 text-4xl font-extrabold tracking-tight leading-none text-gray-900 md:text-5xl lg:text-6xl dark:text-white">
+                            Connections
+                        </h1>
+                        {persistentRequests.length > 0 && (
+                            <button
+                                onClick={() => setShowPendingRequestsModal(true)}
+                                className="relative px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium"
+                            >
+                                <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
+                                    {persistentRequests.length > 9 ? '9+' : persistentRequests.length}
+                                </span>
+                                Pending Requests
+                            </button>
+                        )}
+                    </div>
                 </PageHeader>
                 <DBConnect>
-                    {/* Certification Authority Connection */}
-                    <ConnectToCA />
+                    {/* CA Connection Enforcement Modal */}
+                    <CAConnectionEnforcementModal
+                        visible={showCAEnforcementModal && hasCAConnection === false}
+                        onConnectionEstablished={() => {
+                            setHasCAConnection(true);
+                            setShowCAEnforcementModal(false);
+                            app.dispatch(refreshConnections());
+                        }}
+                        agent={app.agent.instance}
+                        dispatch={app.dispatch}
+                        defaultSeed={app.defaultSeed}
+                    />
 
-                    {/* Pending Connection Requests Section */}
-                    <Box>
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                                Pending Connection Requests
-                            </h2>
-                        </div>
-
-                        {queueError && (
-                            <div className="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded-lg p-4 mb-4">
-                                <div className="flex items-center space-x-2">
-                                    <span className="text-red-600 dark:text-red-400">❌</span>
-                                    <p className="text-red-800 dark:text-red-200 text-sm">
-                                        Error loading connection requests: {queueError}
-                                    </p>
-                                </div>
-                            </div>
-                        )}
-
-                        {queueLoading ? (
-                            <div className="flex items-center justify-center py-8">
-                                <div className="flex items-center space-x-2 text-gray-600 dark:text-gray-400">
-                                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                    </svg>
-                                    <span className="text-sm">Loading connection requests...</span>
-                                </div>
-                            </div>
-                        ) : persistentRequests.length === 0 ? (
-                            <div className="text-center py-8">
-                                <div className="text-gray-400 dark:text-gray-500 mb-2">
-                                    <span className="text-4xl">🤝</span>
-                                </div>
-                                <p className="text-gray-500 dark:text-gray-400 mb-2">
-                                    No pending connection requests.
-                                </p>
-                                <p className="text-xs text-gray-400 dark:text-gray-500">
-                                    Connection requests with credential presentations will appear here.
-                                </p>
-                            </div>
-                        ) : (
-                            <div className="space-y-4 mb-6">
-                                {persistentRequests.map((requestItem, i) => {
-                                    // Reconstruct the SDK.Domain.Message from stored data
-                                    const reconstructedMessage = {
-                                        ...requestItem.message,
-                                        from: requestItem.message.from ? {
-                                            toString: () => requestItem.message.from
-                                        } : null,
-                                        to: requestItem.message.to ? {
-                                            toString: () => requestItem.message.to
-                                        } : null
-                                    } as SDK.Domain.Message;
-
-                                    return (
-                                        <div key={`persistent-request-${requestItem.id}-${i}`} className="relative">
-                                            {/* Request Age Indicator */}
-                                            <div className="absolute top-2 right-2 z-10">
-                                                <span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-xs px-2 py-1 rounded-full">
-                                                    {(() => {
-                                                        const ageHours = Math.floor((Date.now() - requestItem.timestamp) / (1000 * 60 * 60));
-                                                        return ageHours < 1 ? 'New' : `${ageHours}h ago`;
-                                                    })()}
-                                                </span>
-                                            </div>
-
-                                            <ConnectionRequest
-                                                message={reconstructedMessage}
-                                                attachedCredential={requestItem.attachedCredential}
-                                                onRequestHandled={async () => {
-                                                    try {
-                                                        // Mark as handled in persistent queue
-                                                        await handlePersistentRequestAction(requestItem.id, 'accepted');
-
-                                                        // Also delete from message database if exists
-                                                        if (app.db.instance) {
-                                                            await app.db.instance.deleteMessage(requestItem.message.id);
-                                                        }
-
-                                                        // Force refresh connections to update the UI
-                                                        await app.dispatch(refreshConnections());
-                                                    } catch (error) {
-                                                        console.error('❌ Failed to handle persistent request:', error);
-                                                    }
-                                                }}
-                                            />
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </Box>
+                    {/* Pending Requests Modal */}
+                    <PendingRequestsModal
+                        visible={showPendingRequestsModal}
+                        onClose={() => setShowPendingRequestsModal(false)}
+                        requests={persistentRequests}
+                        onRequestHandled={handlePersistentRequestAction}
+                        queueLoading={queueLoading}
+                        queueError={queueError}
+                        refreshConnections={async () => {
+                            await app.dispatch(refreshConnections());
+                        }}
+                        deleteMessage={async (messageId: string) => {
+                            if (app.db.instance) {
+                                await app.db.instance.deleteMessage(messageId);
+                            }
+                        }}
+                    />
 
                     {/* Connections Section */}
                     <Box>

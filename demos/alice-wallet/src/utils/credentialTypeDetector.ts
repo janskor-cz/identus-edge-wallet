@@ -5,20 +5,105 @@
  * and expiration checking for enhanced credential display.
  *
  * Created: November 2, 2025
+ * Updated: December 14, 2025 - Added CertificationAuthorityIdentity type, multi-method credentialSubject extraction
  * Purpose: Support grouped credential display with type-specific layouts
  */
 
-export type CredentialType = 'RealPersonIdentity' | 'SecurityClearance' | 'ServiceConfiguration' | 'EmployeeRole' | 'CISTrainingCertificate' | 'DocumentCopy' | 'Unknown';
+export type CredentialType = 'RealPersonIdentity' | 'SecurityClearance' | 'ServiceConfiguration' | 'EmployeeRole' | 'CISTrainingCertificate' | 'DocumentCopy' | 'CertificationAuthorityIdentity' | 'Unknown';
 export type ClearanceLevel = 'INTERNAL' | 'CONFIDENTIAL' | 'RESTRICTED' | 'TOP-SECRET';
 export type ClearanceColor = 'green' | 'blue' | 'orange' | 'red' | 'gray';
+
+/**
+ * Extract credentialSubject from credential object
+ *
+ * Handles multiple credential formats:
+ * 1. SDK JWTCredential with properties Map (primary for issued credentials)
+ * 2. Direct credentialSubject property (W3C format)
+ * 3. claims array (alternative format)
+ * 4. vc.credentialSubject (nested JWT format)
+ *
+ * @param credential - Credential object to extract subject from
+ * @returns credentialSubject object or null if not found
+ */
+export function getCredentialSubject(credential: any): any {
+  if (!credential) return null;
+
+  console.log('[getCredentialSubject] INPUT:', {
+    hasProperties: !!credential.properties,
+    propertiesType: credential.properties?.constructor?.name,
+    keys: Object.keys(credential)
+  });
+
+  // Method 1: Try class getter directly (if prototype intact)
+  try {
+    const directSubject = credential.credentialSubject;
+    console.log('[getCredentialSubject] Method 1 result:', directSubject ? 'FOUND' : 'null/undefined');
+    if (directSubject && typeof directSubject === 'object') {
+      return directSubject;
+    }
+  } catch (e) {
+    console.log('[getCredentialSubject] Method 1 threw:', e);
+  }
+
+  // Method 2: Try properties Map with explicit function check
+  if (credential.properties && typeof credential.properties.get === 'function') {
+    try {
+      const vc = credential.properties.get('vc');
+      console.log('[getCredentialSubject] Method 2 (Map.get) vc:', vc ? 'FOUND' : 'null');
+      if (vc?.credentialSubject) {
+        console.log('[getCredentialSubject] Method 2 returning credentialSubject');
+        return vc.credentialSubject;
+      }
+    } catch (e) {
+      console.log('[getCredentialSubject] Method 2 threw:', e);
+    }
+  }
+
+  // Method 3: Try properties Map iteration (most reliable for SDK JWTCredential)
+  if (credential.properties && typeof credential.properties.forEach === 'function') {
+    let vcValue: any = null;
+    credential.properties.forEach((value: any, key: any) => {
+      console.log('[getCredentialSubject] Method 3 iterating key:', key);
+      if (key === 'vc' || String(key) === 'vc') {
+        vcValue = value;
+      }
+    });
+    console.log('[getCredentialSubject] Method 3 vcValue:', vcValue ? 'FOUND' : 'null');
+    if (vcValue?.credentialSubject) {
+      console.log('[getCredentialSubject] Method 3 returning credentialSubject');
+      return vcValue.credentialSubject;
+    }
+  }
+
+  // Method 4: Try properties as plain object (if Map was serialized)
+  if (credential.properties && typeof credential.properties === 'object' &&
+      !(credential.properties instanceof Map)) {
+    const vcObj = credential.properties.vc || credential.properties['vc'];
+    console.log('[getCredentialSubject] Method 4 vcObj:', vcObj ? 'FOUND' : 'null');
+    if (vcObj?.credentialSubject) {
+      return vcObj.credentialSubject;
+    }
+  }
+
+  // Method 5: Legacy fallbacks
+  console.log('[getCredentialSubject] Method 5 - trying legacy fallbacks');
+  console.log('[getCredentialSubject] claims[0]:', credential.claims?.[0] ? 'FOUND' : 'null');
+  console.log('[getCredentialSubject] vc.credentialSubject:', credential.vc?.credentialSubject ? 'FOUND' : 'null');
+  if (credential.claims?.[0]) return credential.claims[0];
+  if (credential.vc?.credentialSubject) return credential.vc.credentialSubject;
+
+  console.log('[getCredentialSubject] ALL METHODS FAILED - returning null');
+  return null;
+}
 
 /**
  * Detect credential type from credential object
  *
  * Checks multiple locations for credentialType field:
- * 1. credential.credentialSubject.credentialType
- * 2. credential.claims[0].credentialType (if claims array exists)
- * 3. credential.vc.credentialSubject.credentialType (JWT format)
+ * 1. properties Map -> vc -> credentialSubject (SDK JWTCredential)
+ * 2. credential.credentialSubject.credentialType
+ * 3. credential.claims[0].credentialType (if claims array exists)
+ * 4. credential.vc.credentialSubject.credentialType (JWT format)
  *
  * @param credential - Credential object to analyze
  * @returns Detected credential type or 'Unknown'
@@ -28,6 +113,25 @@ export function getCredentialType(credential: any): CredentialType {
     return 'Unknown';
   }
 
+  // Use helper to get subject from any credential format (including properties Map)
+  const subject = getCredentialSubject(credential);
+  console.log('[getCredentialType] Subject:', subject);
+  console.log('[getCredentialType] Subject keys:', subject ? Object.keys(subject) : 'null');
+  console.log('[getCredentialType] credentialType field:', subject?.credentialType);
+
+  if (subject?.credentialType) {
+    const propsType = subject.credentialType;
+    console.log('[getCredentialType] Detected type:', propsType);
+    if (propsType === 'RealPersonIdentity') return 'RealPersonIdentity';
+    if (propsType === 'SecurityClearance') return 'SecurityClearance';
+    if (propsType === 'ServiceConfiguration') return 'ServiceConfiguration';
+    if (propsType === 'EmployeeRole') return 'EmployeeRole';
+    if (propsType === 'CISTrainingCertificate') return 'CISTrainingCertificate';
+    if (propsType === 'DocumentCopy') return 'DocumentCopy';
+    if (propsType === 'CertificationAuthorityIdentity') return 'CertificationAuthorityIdentity';
+  }
+
+  // Legacy checks for backward compatibility
   // Check credentialSubject.credentialType (standard location)
   const subjectType = credential.credentialSubject?.credentialType;
   if (subjectType === 'RealPersonIdentity') return 'RealPersonIdentity';
@@ -36,6 +140,7 @@ export function getCredentialType(credential: any): CredentialType {
   if (subjectType === 'EmployeeRole') return 'EmployeeRole';
   if (subjectType === 'CISTrainingCertificate') return 'CISTrainingCertificate';
   if (subjectType === 'DocumentCopy') return 'DocumentCopy';
+  if (subjectType === 'CertificationAuthorityIdentity') return 'CertificationAuthorityIdentity';
 
   // Check claims[0].credentialType (alternative location)
   const claimsType = credential.claims?.[0]?.credentialType;
@@ -45,6 +150,7 @@ export function getCredentialType(credential: any): CredentialType {
   if (claimsType === 'EmployeeRole') return 'EmployeeRole';
   if (claimsType === 'CISTrainingCertificate') return 'CISTrainingCertificate';
   if (claimsType === 'DocumentCopy') return 'DocumentCopy';
+  if (claimsType === 'CertificationAuthorityIdentity') return 'CertificationAuthorityIdentity';
 
   // Check vc.credentialSubject.credentialType (JWT format)
   const vcType = credential.vc?.credentialSubject?.credentialType;
@@ -54,6 +160,7 @@ export function getCredentialType(credential: any): CredentialType {
   if (vcType === 'EmployeeRole') return 'EmployeeRole';
   if (vcType === 'CISTrainingCertificate') return 'CISTrainingCertificate';
   if (vcType === 'DocumentCopy') return 'DocumentCopy';
+  if (vcType === 'CertificationAuthorityIdentity') return 'CertificationAuthorityIdentity';
 
   // Check vc.type array for ServiceConfiguration (W3C VC format)
   const vcTypeArray = credential.vc?.type || credential.type;
@@ -63,9 +170,12 @@ export function getCredentialType(credential: any): CredentialType {
   if (Array.isArray(vcTypeArray) && vcTypeArray.includes('CISTrainingCertificate')) {
     return 'CISTrainingCertificate';
   }
+  if (Array.isArray(vcTypeArray) && vcTypeArray.includes('CertificationAuthorityIdentity')) {
+    return 'CertificationAuthorityIdentity';
+  }
 
   // Detect ServiceConfiguration by field signature (enterpriseAgentUrl + enterpriseAgentApiKey)
-  const subject = credential.credentialSubject || credential.claims?.[0] || credential.vc?.credentialSubject;
+  // Use the already-extracted subject from getCredentialSubject() above
   if (subject?.enterpriseAgentUrl && subject?.enterpriseAgentApiKey) {
     return 'ServiceConfiguration';
   }
@@ -83,6 +193,11 @@ export function getCredentialType(credential: any): CredentialType {
   // Detect DocumentCopy by field signature (ephemeralDID + ephemeralServiceEndpoint)
   if (subject?.ephemeralDID && subject?.ephemeralServiceEndpoint) {
     return 'DocumentCopy';
+  }
+
+  // Detect CertificationAuthorityIdentity by field signature (website + issuedDate)
+  if (subject?.website && subject?.issuedDate && !subject?.employeeId) {
+    return 'CertificationAuthorityIdentity';
   }
 
   console.warn('[credentialTypeDetector] Could not determine credential type:', credential);
@@ -185,11 +300,12 @@ export function isCredentialExpired(credential: any): boolean {
     return false;
   }
 
+  // Use getCredentialSubject helper to handle all credential formats
+  const subject = getCredentialSubject(credential);
+
   // Try multiple locations for expiry date
   const expiryDate =
-    credential.credentialSubject?.expiryDate ||
-    credential.claims?.[0]?.expiryDate ||
-    credential.vc?.credentialSubject?.expiryDate ||
+    subject?.expiryDate ||
     credential.expirationDate;
 
   if (!expiryDate) {
@@ -223,7 +339,8 @@ export function getCredentialHolderName(credential: any): string {
     return 'Unknown';
   }
 
-  const subject = credential.credentialSubject || credential.claims?.[0] || credential.vc?.credentialSubject;
+  // Use getCredentialSubject helper to handle all credential formats
+  const subject = getCredentialSubject(credential);
 
   if (!subject) {
     return 'Unknown';
@@ -284,7 +401,8 @@ export interface DocumentCopyInfo {
 export function getDocumentCopyInfo(credential: any): DocumentCopyInfo | null {
   if (!credential) return null;
 
-  const subject = credential.credentialSubject || credential.claims?.[0] || credential.vc?.credentialSubject;
+  // Use getCredentialSubject helper to handle all credential formats
+  const subject = getCredentialSubject(credential);
   if (!subject) return null;
 
   // Check if this is a DocumentCopy credential
@@ -322,8 +440,8 @@ export function getDocumentCopyInfo(credential: any): DocumentCopyInfo | null {
     ephemeralServiceEndpoint: subject.ephemeralServiceEndpoint,
     originalDocumentDID: subject.originalDocumentDID || '',
     title: subject.title || 'Untitled Document',
-    classification: subject.classification || 'UNCLASSIFIED',
-    clearanceLevelGranted: subject.clearanceLevelGranted || 'UNCLASSIFIED',
+    classification: subject.classification || 'INTERNAL',
+    clearanceLevelGranted: subject.clearanceLevelGranted || 'INTERNAL',
     redactedSectionCount: subject.redactedSectionCount || 0,
     visibleSectionCount: subject.visibleSectionCount || 0,
     expiresAt: expiresAt || '',

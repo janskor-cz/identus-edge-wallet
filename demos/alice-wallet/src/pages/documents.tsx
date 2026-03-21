@@ -26,13 +26,13 @@ import { LockClosedIcon, DocumentIcon, RefreshIcon, FilterIcon, ShieldCheckIcon 
 const getClassificationBadge = (level: number) => {
   switch (level) {
     case 1:
-      return { color: 'bg-green-100 text-green-800 border-green-300', label: 'UNCLASSIFIED' };
+      return { color: 'bg-green-100 text-green-800 border-green-300', label: 'INTERNAL' };
     case 2:
       return { color: 'bg-blue-100 text-blue-800 border-blue-300', label: 'CONFIDENTIAL' };
     case 3:
-      return { color: 'bg-orange-100 text-orange-800 border-orange-300', label: 'SECRET' };
+      return { color: 'bg-orange-100 text-orange-800 border-orange-300', label: 'RESTRICTED' };
     case 4:
-      return { color: 'bg-red-100 text-red-800 border-red-300', label: 'TOP SECRET' };
+      return { color: 'bg-red-100 text-red-800 border-red-300', label: 'TOP-SECRET' };
     default:
       return { color: 'bg-gray-100 text-gray-800 border-gray-300', label: 'UNKNOWN' };
   }
@@ -82,14 +82,18 @@ export default function DocumentsPage() {
 
         // Extract clearance level
         const subject = clearanceVC.credentialSubject || {};
-        const level = subject.clearanceLevel || subject.securityLevel || 'UNCLASSIFIED';
+        const level = subject.clearanceLevel || subject.securityLevel || 'INTERNAL';
 
-        // Convert label to number
+        // Convert label to number (with legacy support)
         const levelMap: { [key: string]: number } = {
-          'UNCLASSIFIED': 1,
+          'INTERNAL': 1,
+          'UNCLASSIFIED': 1,  // Legacy
           'CONFIDENTIAL': 2,
-          'SECRET': 3,
-          'TOP_SECRET': 4
+          'RESTRICTED': 3,
+          'SECRET': 3,  // Legacy
+          'TOP-SECRET': 4,
+          'TOP_SECRET': 4,
+          'TOPSECRET': 4
         };
         const numLevel = levelMap[level.toUpperCase()] || 1;
         setUserClearanceLevel(numLevel);
@@ -108,7 +112,7 @@ export default function DocumentsPage() {
 
         console.log('[Documents] User clearance level:', numLevel, '/', level);
       } else {
-        console.log('[Documents] No Security Clearance VC found, defaulting to UNCLASSIFIED');
+        console.log('[Documents] No Security Clearance VC found, defaulting to INTERNAL');
         setUserClearanceLevel(1);
       }
 
@@ -259,10 +263,10 @@ export default function DocumentsPage() {
                   className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">All Classifications</option>
-                  <option value="1">UNCLASSIFIED</option>
+                  <option value="1">INTERNAL</option>
                   <option value="2">CONFIDENTIAL</option>
-                  {userClearanceLevel >= 3 && <option value="3">SECRET</option>}
-                  {userClearanceLevel >= 4 && <option value="4">TOP SECRET</option>}
+                  {userClearanceLevel >= 3 && <option value="3">RESTRICTED</option>}
+                  {userClearanceLevel >= 4 && <option value="4">TOP-SECRET</option>}
                 </select>
               </div>
             </div>

@@ -94,7 +94,7 @@ export class RxdbStore implements Pluto.Store {
 
   async insert(name: string, data: any) {
     const table = this.getCollection(name);
-    await table.insert(data);
+    await table.upsert(data);
   }
 
   /**

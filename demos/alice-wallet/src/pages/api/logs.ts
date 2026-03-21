@@ -26,9 +26,10 @@ interface ApiResponse {
   success: boolean;
   message?: string;
   logsWritten?: number;
+  logFilePath?: string;
 }
 
-const LOG_DIR = '/tmp';
+const LOG_DIR = '/root/logs';
 const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_LOG_FILES = 50;
 
@@ -70,7 +71,8 @@ export default async function handler(
     return res.status(200).json({
       success: true,
       message: `Wrote ${logs.length} log entries`,
-      logsWritten: logs.length
+      logsWritten: logs.length,
+      logFilePath: logFile
     });
   } catch (error) {
     console.error('[API /logs] Error writing logs:', error);

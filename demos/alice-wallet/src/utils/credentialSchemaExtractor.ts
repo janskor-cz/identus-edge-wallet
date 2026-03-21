@@ -11,7 +11,59 @@
  * - Selective disclosure
  * - Custom rendering based on credential type
  * - Schema validation
+ *
+ * Updated: December 14, 2025 - Added multi-method VC and subject extraction for SDK JWTCredential support
  */
+
+import { getCredentialSubject } from './credentialTypeDetector';
+
+/**
+ * Extract VC object from credential using multiple methods
+ * Handles SDK JWTCredential with properties Map
+ */
+function getVC(credential: any): any {
+  if (!credential) return null;
+
+  // Method 1: Try class getter directly
+  try {
+    if (credential.vc) {
+      console.log('[getVC] Method 1 (getter): FOUND');
+      return credential.vc;
+    }
+  } catch (e) {
+    console.log('[getVC] Method 1 threw:', e);
+  }
+
+  // Method 2: Try properties Map with .get()
+  if (credential.properties && typeof credential.properties.get === 'function') {
+    try {
+      const vc = credential.properties.get('vc');
+      if (vc) {
+        console.log('[getVC] Method 2 (Map.get): FOUND');
+        return vc;
+      }
+    } catch (e) {
+      console.log('[getVC] Method 2 threw:', e);
+    }
+  }
+
+  // Method 3: Try properties Map iteration
+  if (credential.properties && typeof credential.properties.forEach === 'function') {
+    let vcValue: any = null;
+    credential.properties.forEach((value: any, key: any) => {
+      if (key === 'vc' || String(key) === 'vc') {
+        vcValue = value;
+      }
+    });
+    if (vcValue) {
+      console.log('[getVC] Method 3 (forEach): FOUND');
+      return vcValue;
+    }
+  }
+
+  console.log('[getVC] All methods failed - returning null');
+  return null;
+}
 
 /**
  * Known schema GUIDs mapped to credential types
@@ -54,9 +106,12 @@ export interface CredentialTypeInfo {
  */
 export function extractCredentialSchema(credential: any): CredentialSchemaInfo | null {
   try {
+    // Use multi-method VC extraction for SDK JWTCredential support
+    const vc = getVC(credential);
+
     // JWT credentials: Check vc.credentialSchema array
-    if (credential.vc?.credentialSchema && Array.isArray(credential.vc.credentialSchema)) {
-      const schema = credential.vc.credentialSchema[0];
+    if (vc?.credentialSchema && Array.isArray(vc.credentialSchema)) {
+      const schema = vc.credentialSchema[0];
       if (schema?.id) {
         console.log('[credentialSchemaExtractor] Found schema in JWT vc.credentialSchema:', schema.id);
         return {
@@ -139,7 +194,21 @@ export function getCredentialTypeFromSchema(schemaId: string): 'RealPerson' | 'S
  */
 export function getCredentialTypeFromClaims(credential: any): string | null {
   try {
-    // Check claims array (JWT credentials)
+    // Use multi-method subject extraction for SDK JWTCredential support
+    const subject = getCredentialSubject(credential);
+
+    // Check credentialSubject (using multi-method extraction)
+    if (subject?.credentialType) {
+      console.log('[credentialSchemaExtractor] Found credentialType in subject:', subject.credentialType);
+
+      // Map known credentialType values
+      if (subject.credentialType === 'RealPersonIdentity') return 'RealPerson';
+      if (subject.credentialType === 'SecurityClearance') return 'SecurityClearance';
+
+      return subject.credentialType;
+    }
+
+    // Check claims array (legacy JWT credentials)
     if (credential.claims && Array.isArray(credential.claims) && credential.claims.length > 0) {
       const firstClaim = credential.claims[0];
 
@@ -153,17 +222,6 @@ export function getCredentialTypeFromClaims(credential: any): string | null {
 
         return firstClaim.credentialType;
       }
-    }
-
-    // Check credentialSubject (Embedded VCs)
-    if (credential.credentialSubject?.credentialType) {
-      console.log('[credentialSchemaExtractor] Found credentialType in credentialSubject:', credential.credentialSubject.credentialType);
-
-      // Map known credentialType values
-      if (credential.credentialSubject.credentialType === 'RealPersonIdentity') return 'RealPerson';
-      if (credential.credentialSubject.credentialType === 'SecurityClearance') return 'SecurityClearance';
-
-      return credential.credentialSubject.credentialType;
     }
 
     // Check type array (W3C VC standard)
@@ -246,13 +304,15 @@ export function identifyCredentialType(credential: any): CredentialTypeInfo {
 function checkForPersonFields(credential: any): boolean {
   const personFields = ['firstName', 'lastName', 'uniqueId', 'dateOfBirth', 'gender'];
 
-  // Check in credentialSubject
-  if (credential.credentialSubject) {
-    const hasFields = personFields.some(field => field in credential.credentialSubject);
+  // Use multi-method subject extraction for SDK JWTCredential support
+  const subject = getCredentialSubject(credential);
+  if (subject) {
+    const hasFields = personFields.some(field => field in subject);
+    console.log('[checkForPersonFields] Subject fields check:', hasFields, 'Fields found:', personFields.filter(f => f in subject));
     if (hasFields) return true;
   }
 
-  // Check in claims array
+  // Fallback: Check in claims array (legacy)
   if (credential.claims && Array.isArray(credential.claims)) {
     for (const claim of credential.claims) {
       if (claim.credentialSubject) {
@@ -265,6 +325,7 @@ function checkForPersonFields(credential: any): boolean {
     }
   }
 
+  console.log('[checkForPersonFields] No person fields found');
   return false;
 }
 

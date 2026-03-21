@@ -27,7 +27,7 @@ import {
  * 1. Long-form PRISM DIDs (self-resolving, for credential issuance)
  * 2. Enterprise DIDs (from Cloud Agent, if configured)
  *
- * Note: Only shows PRISM DIDs that have an alias (user-created DIDs)
+ * Shows all PRISM DIDs including those created during credential acceptance.
  */
 const DIDManagementPage: React.FC = () => {
     const dispatch = useAppDispatch();
@@ -48,10 +48,8 @@ const DIDManagementPage: React.FC = () => {
     // Get agent from Redux store via useMountedApp hook
     const agent = app.agent.instance;
 
-    // Filter PRISM DIDs to show only those with an alias (user-created)
-    const displayedPrismDIDs = (prismDIDs || []).filter(
-        (did: any) => did?.alias
-    );
+    // Show all PRISM DIDs (including those created during credential acceptance)
+    const displayedPrismDIDs = prismDIDs || [];
 
     /**
      * Load PRISM DIDs from Pluto storage
@@ -87,7 +85,8 @@ const DIDManagementPage: React.FC = () => {
             const result = await dispatch(createLongFormPrismDID({
                 agent,
                 alias: alias.trim() || undefined,
-                defaultSeed: app.defaultSeed
+                defaultSeed: app.defaultSeed,
+                mediatorUri: 'https://identuslabel.cz/mediator'
             })).unwrap();
 
             setCreateSuccess(`Created: ${result.did.toString().substring(0, 50)}...`);

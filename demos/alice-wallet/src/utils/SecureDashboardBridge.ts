@@ -270,115 +270,136 @@ async function handleDecryptRequest(
   console.log(`🔓 [SecureDashboardBridge] Decrypt request for section: ${sectionId}`);
   console.log(`🔓 [SecureDashboardBridge] Agent available: ${_sdkAgent ? 'YES' : 'NO (Pluto fallback disabled)'}`);
 
-  try {
-    let privateKeyBytes: Uint8Array | null = null;
-    let publicKeyBytes: Uint8Array | null = null;
-    let keySource = '';
+  // Collect ALL available key pairs to try for decryption
+  const keyPairsToTry: Array<{
+    privateKeyBytes: Uint8Array;
+    publicKeyBytes: Uint8Array;
+    source: string;
+  }> = [];
 
-    // ============================================================
-    // PASS 1: Try localStorage (fast path - manually generated keys)
-    // ============================================================
-    const securityKeysDataStr = getItem('security-clearance-keys');
+  // ============================================================
+  // PASS 1: Collect localStorage keys
+  // ============================================================
+  const securityKeysData = getItem('security-clearance-keys');
 
-    if (securityKeysDataStr) {
-      console.log('🔑 [SecureDashboardBridge] Found security-clearance-keys in localStorage');
-
-      try {
-        const securityKeysData = JSON.parse(securityKeysDataStr);
-        const activeKeyId = securityKeysData.activeKeyId;
-        const activeKey = securityKeysData.keys.find((k: any) => k.keyId === activeKeyId);
-
-        if (activeKey?.x25519?.privateKeyBytes && activeKey?.x25519?.publicKeyBytes) {
-          privateKeyBytes = base64url.decode(activeKey.x25519.privateKeyBytes);
-          publicKeyBytes = base64url.decode(activeKey.x25519.publicKeyBytes);
-          keySource = 'localStorage';
-          console.log('🔑 [SecureDashboardBridge] Using localStorage keys:', activeKeyId);
-        }
-      } catch (parseError) {
-        console.warn('⚠️ [SecureDashboardBridge] Failed to parse localStorage keys:', parseError);
-      }
-    }
-
-    // ============================================================
-    // PASS 2: Try Pluto fallback (PRISM DID keys)
-    // ============================================================
-    if (!privateKeyBytes && _sdkAgent) {
-      console.log('🔍 [SecureDashboardBridge] localStorage keys not found, trying Pluto fallback...');
-
-      try {
-        // Get all PRISM DIDs and check for X25519 keys
-        const prismDIDs = await _sdkAgent.pluto.getAllPrismDIDs();
-
-        if (prismDIDs && prismDIDs.length > 0) {
-          console.log(`📦 [SecureDashboardBridge] Found ${prismDIDs.length} PRISM DIDs in Pluto`);
-
-          // Try each PRISM DID until we find X25519 keys
-          for (const prismDID of prismDIDs) {
-            const didString = prismDID.did.toString();
-            const plutoKeys = await extractKeysFromPrismDID(_sdkAgent, didString);
-
-            if (plutoKeys?.x25519) {
-              privateKeyBytes = base64url.decode(plutoKeys.x25519.privateKeyBytes);
-              publicKeyBytes = base64url.decode(plutoKeys.x25519.publicKeyBytes);
-              keySource = `Pluto (${didString.substring(0, 30)}...)`;
-              console.log('🔑 [SecureDashboardBridge] Using Pluto keys from PRISM DID');
-              break;
-            }
-          }
-        }
-      } catch (plutoError) {
-        console.warn('⚠️ [SecureDashboardBridge] Pluto fallback failed:', plutoError);
-      }
-    }
-
-    // ============================================================
-    // Check if we found any keys
-    // ============================================================
-    if (!privateKeyBytes || !publicKeyBytes) {
-      const errorMsg = _sdkAgent
-        ? 'No X25519 keys found in localStorage or Pluto. Please generate Security Clearance credential first.'
-        : 'Security clearance keys not found. Please generate Security Clearance credential first.';
-      throw new Error(errorMsg);
-    }
-
-    console.log(`🔧 [SecureDashboardBridge] Keys decoded from ${keySource}, calling decryptMessage()`);
-
-    // Decrypt content using wallet's decryptMessage utility
-    const plaintext = await decryptMessage(
-      encryptedContent,
-      privateKeyBytes,
-      publicKeyBytes
-    );
-
-    console.log(`✅ [SecureDashboardBridge] Decryption successful for section: ${sectionId}`);
-
-    // Send decrypted plaintext back to dashboard
-    source.postMessage({
-      type: 'DECRYPT_RESPONSE',
-      requestId,
-      sectionId,
-      plaintext,
-      timestamp: Date.now()
-    }, origin);
-
-    console.log(`📤 [SecureDashboardBridge] DECRYPT_RESPONSE sent for section: ${sectionId}`);
-
-  } catch (error) {
-    console.error(`❌ [SecureDashboardBridge] Decryption failed for section ${sectionId}:`, error);
-
-    // Send error response to dashboard
+  if (securityKeysData && typeof securityKeysData === 'object') {
     try {
-      source.postMessage({
-        type: 'DECRYPT_ERROR',
-        requestId,
-        sectionId,
-        error: error instanceof Error ? error.message : 'Unknown decryption error',
-        timestamp: Date.now()
-      }, origin);
-    } catch (postError) {
-      console.error('❌ [SecureDashboardBridge] Failed to send error response:', postError);
+      const keys = securityKeysData.keys || [];
+      console.log(`🔑 [SecureDashboardBridge] Found ${keys.length} keys in localStorage`);
+
+      for (const key of keys) {
+        if (key?.x25519?.privateKeyBytes && key?.x25519?.publicKeyBytes) {
+          keyPairsToTry.push({
+            privateKeyBytes: base64url.decode(key.x25519.privateKeyBytes),
+            publicKeyBytes: base64url.decode(key.x25519.publicKeyBytes),
+            source: `localStorage:${key.keyId} (pubKey: ${key.x25519.publicKeyBytes.substring(0, 12)}...)`
+          });
+        }
+      }
+    } catch (parseError) {
+      console.warn('⚠️ [SecureDashboardBridge] Failed to access localStorage keys:', parseError);
     }
   }
+
+  // ============================================================
+  // PASS 2: Collect Pluto keys (PRISM DIDs)
+  // ============================================================
+  if (_sdkAgent) {
+    try {
+      const prismDIDs = await _sdkAgent.pluto.getAllPrismDIDs();
+
+      if (prismDIDs && prismDIDs.length > 0) {
+        console.log(`📦 [SecureDashboardBridge] Found ${prismDIDs.length} PRISM DIDs in Pluto`);
+
+        for (const prismDID of prismDIDs) {
+          const didString = prismDID.did.toString();
+          const plutoKeys = await extractKeysFromPrismDID(_sdkAgent, didString);
+
+          if (plutoKeys?.x25519?.privateKeyBytes && plutoKeys?.x25519?.publicKeyBytes) {
+            keyPairsToTry.push({
+              privateKeyBytes: base64url.decode(plutoKeys.x25519.privateKeyBytes),
+              publicKeyBytes: base64url.decode(plutoKeys.x25519.publicKeyBytes),
+              source: `Pluto:${didString.substring(0, 30)}...`
+            });
+          }
+        }
+      }
+    } catch (plutoError) {
+      console.warn('⚠️ [SecureDashboardBridge] Pluto key collection failed:', plutoError);
+    }
+  }
+
+  // ============================================================
+  // Check if we found any keys
+  // ============================================================
+  if (keyPairsToTry.length === 0) {
+    const errorMsg = _sdkAgent
+      ? 'No X25519 keys found in localStorage or Pluto. Please generate Security Clearance credential first.'
+      : 'Security clearance keys not found. Please generate Security Clearance credential first.';
+
+    console.error(`❌ [SecureDashboardBridge] ${errorMsg}`);
+
+    source.postMessage({
+      type: 'DECRYPT_ERROR',
+      requestId,
+      sectionId,
+      error: errorMsg,
+      timestamp: Date.now()
+    }, origin);
+    return;
+  }
+
+  console.log(`🔑 [SecureDashboardBridge] Collected ${keyPairsToTry.length} key pairs to try`);
+
+  // ============================================================
+  // Try each key pair until one succeeds
+  // ============================================================
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < keyPairsToTry.length; i++) {
+    const keyPair = keyPairsToTry[i];
+    console.log(`🔧 [SecureDashboardBridge] Trying key ${i + 1}/${keyPairsToTry.length}: ${keyPair.source}`);
+
+    try {
+      const plaintext = await decryptMessage(
+        encryptedContent,
+        keyPair.privateKeyBytes,
+        keyPair.publicKeyBytes
+      );
+
+      console.log(`✅ [SecureDashboardBridge] Decryption successful with key: ${keyPair.source}`);
+
+      // Send decrypted plaintext back to dashboard
+      source.postMessage({
+        type: 'DECRYPT_RESPONSE',
+        requestId,
+        sectionId,
+        plaintext,
+        timestamp: Date.now()
+      }, origin);
+
+      console.log(`📤 [SecureDashboardBridge] DECRYPT_RESPONSE sent for section: ${sectionId}`);
+      return; // Success! Exit the function
+
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.log(`⚠️ [SecureDashboardBridge] Key ${i + 1} failed: ${lastError.message.substring(0, 50)}...`);
+      // Continue to next key
+    }
+  }
+
+  // All keys failed
+  console.error(`❌ [SecureDashboardBridge] All ${keyPairsToTry.length} keys failed for section ${sectionId}`);
+  console.error(`❌ [SecureDashboardBridge] This means NONE of your wallet keys match the key used for encryption`);
+  console.error(`❌ [SecureDashboardBridge] The Security Clearance VC may have different keys than what's in your wallet`);
+
+  source.postMessage({
+    type: 'DECRYPT_ERROR',
+    requestId,
+    sectionId,
+    error: `Decryption failed - none of your ${keyPairsToTry.length} wallet keys match the encryption key. Your Security Clearance VC may have been issued with different keys than what's stored in your wallet.`,
+    timestamp: Date.now()
+  }, origin);
 }
 
 /**
@@ -421,20 +442,29 @@ async function getEd25519KeyFromPluto(): Promise<Uint8Array | null> {
   // ============================================================
   // PASS 1: Try localStorage (fast path - manually generated keys)
   // ============================================================
-  const securityKeysDataStr = getItem('security-clearance-keys');
+  const securityKeysData = getItem('security-clearance-keys');
 
-  if (securityKeysDataStr) {
+  if (securityKeysData && typeof securityKeysData === 'object') {
     try {
-      const securityKeysData = JSON.parse(securityKeysDataStr);
+      // getItem() already parses JSON - no need to JSON.parse again!
       const activeKeyId = securityKeysData.activeKeyId;
-      const activeKey = securityKeysData.keys.find((k: any) => k.keyId === activeKeyId);
+      const keys = securityKeysData.keys || [];
+      const activeKey = keys.find((k: any) => k.keyId === activeKeyId);
 
       if (activeKey?.ed25519?.privateKeyBytes) {
         console.log('🔑 [SecureDashboardBridge] Using localStorage Ed25519 key');
         return base64url.decode(activeKey.ed25519.privateKeyBytes);
       }
+
+      // If active key doesn't have Ed25519, try all keys
+      for (const key of keys) {
+        if (key?.ed25519?.privateKeyBytes) {
+          console.log('🔑 [SecureDashboardBridge] Using fallback localStorage Ed25519 key:', key.keyId);
+          return base64url.decode(key.ed25519.privateKeyBytes);
+        }
+      }
     } catch (parseError) {
-      console.warn('⚠️ [SecureDashboardBridge] Failed to parse localStorage keys:', parseError);
+      console.warn('⚠️ [SecureDashboardBridge] Failed to access localStorage Ed25519 keys:', parseError);
     }
   }
 
@@ -917,7 +947,7 @@ async function handleSSIDocumentDownloadRequest(
       ephemeralDID,
       originalDocumentDID: documentDID,
       title: title || 'Untitled Document',
-      overallClassification: prepareData.documentMetadata?.classification || 'UNCLASSIFIED',
+      overallClassification: prepareData.documentMetadata?.classification || 'INTERNAL',
       encryptedContent: new ArrayBuffer(0), // Content fetched on-demand from service endpoint
       encryptionInfo: {
         serverPublicKey: prepareData.ephemeralX25519PublicKey || '',

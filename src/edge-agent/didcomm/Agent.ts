@@ -461,15 +461,17 @@ export default class DIDCommAgent extends Startable.Controller {
    * @param {OfferCredential} offer
    * @param {Object} options - Optional configuration
    * @param {Domain.DID} options.subjectDID - Optional existing PRISM DID to use as credential subject instead of creating new one
+   * @param {string} options.alias - Optional alias for newly created PRISM DID
    * @returns {Promise<RequestCredential>}
    */
   async prepareRequestCredentialWithIssuer(
     offer: OfferCredential,
-    options?: { subjectDID?: Domain.DID }
+    options?: { subjectDID?: Domain.DID; alias?: string }
   ): Promise<RequestCredential> {
     const task = new HandleOfferCredential({
       offer,
-      subjectDID: options?.subjectDID
+      subjectDID: options?.subjectDID,
+      alias: options?.alias
     });
     return this.runTask(task);
   }

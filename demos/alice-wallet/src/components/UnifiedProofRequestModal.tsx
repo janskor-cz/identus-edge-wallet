@@ -48,6 +48,35 @@ import { verifyCredentialStatus, CredentialStatus } from '@/utils/credentialStat
 import { extractCredentialDisplayName } from '@/utils/credentialNaming';
 import { getSchemaDisplayName, matchesSchema } from '@/utils/schemaMapping';
 import { getCredentialType } from '@/utils/credentialTypeDetector';
+import { filterCredentialsForProofRequest } from '@/utils/credentialFilterRules';
+
+/**
+ * Extract meaningful display name from enterprise credential
+ * Uses role, training year, or clearance level based on credential type
+ *
+ * Enterprise credentials have claims directly in cred.claims (not cred.credential.credentialSubject)
+ */
+function extractEnterpriseCredentialDisplayName(cred: any): string {
+  const claims = cred.claims || {};
+
+  // CISTraining: "CIS Training 2026"
+  if (claims.trainingYear) {
+    return `CIS Training ${claims.trainingYear}`;
+  }
+
+  // EmployeeRole: "Senior Engineer"
+  if (claims.role) {
+    return claims.role;
+  }
+
+  // SecurityClearance: "CONFIDENTIAL"
+  if (claims.clearanceLevel) {
+    return claims.clearanceLevel;
+  }
+
+  // Fallback to credential format or record ID
+  return `Enterprise Credential ${cred.recordId?.substring(0, 8) || 'Unknown'}`;
+}
 
 /**
  * Unified proof request structure
@@ -185,9 +214,7 @@ export const UnifiedProofRequestModal: React.FC = () => {
     enterpriseCredentials.forEach(cred => {
         // Extract display info from credential data
         const credData = cred.credential;
-        const displayName = credData?.credentialSubject?.firstName
-          ? `${credData.credentialSubject.firstName} ${credData.credentialSubject.lastName || ''}`
-          : `Enterprise Credential ${cred.recordId.substring(0, 8)}`;
+        const displayName = extractEnterpriseCredentialDisplayName(cred);
 
         credentials.push({
           id: cred.recordId,
@@ -276,14 +303,38 @@ export const UnifiedProofRequestModal: React.FC = () => {
       // Apply filtering based on request source
       let filteredCreds = validCreds;
 
-      if (currentRequest.source === 'personal' && currentRequest.schemaId) {
-        // Personal requests: filter by schema ID
+      if (currentRequest.source === 'personal') {
+        // Personal requests: Apply purpose-based filtering to remove system credentials
+        const requestBody = currentRequest.requestMessage?.body as any;
+        const requestPurpose = {
+          goalCode: requestBody?.goal_code || requestBody?.goalCode,
+          schemaId: currentRequest.schemaId,
+          comment: requestBody?.comment || requestBody?.goal
+        };
+
+        // Get only personal credentials for filtering
+        const personalCreds = validCreds
+          .filter(c => c.source === 'personal')
+          .map(c => c.credential);
+
+        // Apply purpose-based filtering
+        const filteredPersonalCreds = filterCredentialsForProofRequest(personalCreds, requestPurpose);
+        console.log(`🎯 [UNIFIED] Purpose filtering: ${personalCreds.length} -> ${filteredPersonalCreds.length} personal credentials`);
+
+        // Rebuild unified credentials list with filtered personal credentials
         filteredCreds = validCreds.filter(unifiedCred => {
           if (unifiedCred.source === 'personal') {
-            return matchesSchema(unifiedCred.credential, currentRequest.schemaId!);
+            return filteredPersonalCreds.some(fc => fc.id === unifiedCred.credential.id);
           }
-          return matchesSchema(unifiedCred.credential, currentRequest.schemaId!);
+          return true; // Keep enterprise credentials
         });
+
+        // Then apply schema filtering if schema ID specified
+        if (currentRequest.schemaId) {
+          filteredCreds = filteredCreds.filter(unifiedCred =>
+            matchesSchema(unifiedCred.credential, currentRequest.schemaId!)
+          );
+        }
 
       } else if (currentRequest.source === 'enterprise') {
         // ✅ FILTERING DISABLED: Enterprise requests now show ALL credentials for manual selection
@@ -435,7 +486,7 @@ export const UnifiedProofRequestModal: React.FC = () => {
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]"
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10001]"
       style={{ backdropFilter: 'blur(2px)' }}
     >
       <div

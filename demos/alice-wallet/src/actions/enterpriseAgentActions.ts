@@ -677,11 +677,20 @@ export const pollPendingCredentialOffers = createAsyncThunk(
         return [];
       }
 
-      // Filter for pending offers from the employee wallet's perspective (OfferReceived/Holder)
-      // We're querying the employee's wallet on Enterprise Cloud Agent, so records have role=Holder and state=OfferReceived
-      const pendingOffers = response.data.contents.filter(
+      // Map API response properties to Redux state interface
+      // API returns 'protocolState', but our interface expects 'state'
+      const allCredentials: EnterpriseCredential[] = (response.data.contents || []).map((cred: any) => ({
+        ...cred,
+        state: cred.protocolState || cred.state  // Map protocolState → state
+      }));
+
+      // ✅ FIX: Update Redux state with ALL credentials so EnterpriseCredentialOfferModal sees new offers
+      dispatch(setCredentials(allCredentials));
+
+      // Filter for pending offers to return (for callers who need just offers)
+      const pendingOffers = allCredentials.filter(
         (credential: any) =>
-          credential.protocolState === 'OfferReceived' &&
+          credential.state === 'OfferReceived' &&
           credential.role === 'Holder'
       );
 

@@ -96,11 +96,22 @@ export async function parseQRMessage(rawData: string): Promise<ScanResult> {
  * @param url - Full URL with query parameters
  * @returns Parsed scan result
  */
-function parseURLMessage(url: string): ScanResult {
-  console.log('🔍 [QR Parser] Parsing URL message');
+async function parseURLMessage(url: string): Promise<ScanResult> {
+  console.log('🔍 [QR Parser] Parsing URL message:', url.substring(0, 80) + '...');
 
   try {
     const urlObj = new URL(url);
+
+    // Check for short URL pattern (e.g., /company-admin/s/xxxxx or /s/xxxxx)
+    const shortUrlPattern = /\/s\/([A-Za-z0-9]+)$/;
+    if (shortUrlPattern.test(urlObj.pathname)) {
+      console.log('🔗 [QR Parser] Detected short URL, resolving...');
+      const resolvedUrl = await resolveShortUrl(url);
+      if (resolvedUrl && resolvedUrl !== url) {
+        console.log('✅ [QR Parser] Short URL resolved, parsing target URL');
+        return parseURLMessage(resolvedUrl);
+      }
+    }
 
     // Check for OOB invitation parameter (_oob)
     const oobParam = urlObj.searchParams.get('_oob');
@@ -132,6 +143,45 @@ function parseURLMessage(url: string): ScanResult {
   } catch (error) {
     console.error('❌ [QR Parser] URL parsing error:', error);
     throw new Error(`Invalid invitation URL: ${error instanceof Error ? error.message : 'unknown error'}`);
+  }
+}
+
+/**
+ * Resolve a short URL to its target URL
+ *
+ * @param shortUrl - The short URL to resolve
+ * @returns The resolved target URL or null if resolution fails
+ */
+async function resolveShortUrl(shortUrl: string): Promise<string | null> {
+  try {
+    console.log('🔗 [QR Parser] Resolving short URL via HEAD request...');
+
+    // Use HEAD request to get redirect without following it
+    const response = await fetch(shortUrl, {
+      method: 'HEAD',
+      redirect: 'manual' // Don't follow redirects automatically
+    });
+
+    // Check for redirect response (302, 301, 307, 308)
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('Location');
+      if (location) {
+        console.log('✅ [QR Parser] Short URL resolved to:', location.substring(0, 80) + '...');
+        return location;
+      }
+    }
+
+    // If no redirect, try to get the URL from response (some implementations might differ)
+    if (response.ok) {
+      console.log('⚠️ [QR Parser] Short URL did not redirect, using original URL');
+      return shortUrl;
+    }
+
+    console.error('❌ [QR Parser] Short URL resolution failed, status:', response.status);
+    return null;
+  } catch (error) {
+    console.error('❌ [QR Parser] Short URL resolution error:', error);
+    return null;
   }
 }
 

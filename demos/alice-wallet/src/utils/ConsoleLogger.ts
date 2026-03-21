@@ -31,6 +31,7 @@ class ConsoleLogger {
   private flushTimer: NodeJS.Timeout | null = null;
   private isInitialized: boolean = false;
   private sessionKey: string = 'console-logger-buffer';
+  private logFilePathDisplayed: boolean = false;
 
   // Store original console methods
   private originalConsole = {
@@ -232,6 +233,13 @@ class ConsoleLogger {
         this.logBuffer = [...logsToSend, ...this.logBuffer];
         this.saveBufferToStorage();
         this.originalConsole.error(`[ConsoleLogger] Failed to send logs: ${response.status}`);
+      } else {
+        // Display log file path once on first successful flush
+        const data = await response.json();
+        if (data.logFilePath && !this.logFilePathDisplayed) {
+          this.originalConsole.log(`📁 [ConsoleLogger] Logging to: ${data.logFilePath}`);
+          this.logFilePathDisplayed = true;
+        }
       }
     } catch (error) {
       // Put logs back in buffer if send failed

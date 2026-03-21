@@ -37,14 +37,18 @@ import { getSecurityClearanceKeys } from '@/utils/securityKeyStorage';
  */
 const getClassificationBadge = (level: string) => {
   switch (level?.toUpperCase()) {
-    case 'UNCLASSIFIED':
-      return { color: 'bg-green-600', label: 'UNCLASSIFIED' };
+    case 'INTERNAL':
+    case 'UNCLASSIFIED':  // Legacy support
+      return { color: 'bg-green-600', label: 'INTERNAL' };
     case 'CONFIDENTIAL':
       return { color: 'bg-blue-600', label: 'CONFIDENTIAL' };
-    case 'SECRET':
-      return { color: 'bg-orange-600', label: 'SECRET' };
+    case 'RESTRICTED':
+    case 'SECRET':  // Legacy support
+      return { color: 'bg-orange-600', label: 'RESTRICTED' };
     case 'TOP_SECRET':
-      return { color: 'bg-red-600', label: 'TOP SECRET' };
+    case 'TOP-SECRET':
+    case 'TOPSECRET':
+      return { color: 'bg-red-600', label: 'TOP-SECRET' };
     default:
       return { color: 'bg-gray-600', label: level || 'CLASSIFIED' };
   }
@@ -487,6 +491,7 @@ export const ClassifiedDocumentViewer: React.FC<ClassifiedDocumentViewerProps> =
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
               }
+              .classified-doc-content [data-clearance="INTERNAL"]::before,
               .classified-doc-content [data-clearance="UNCLASSIFIED"]::before {
                 background: #4CAF50;
                 color: white;
@@ -495,10 +500,12 @@ export const ClassifiedDocumentViewer: React.FC<ClassifiedDocumentViewerProps> =
                 background: #2196F3;
                 color: white;
               }
+              .classified-doc-content [data-clearance="RESTRICTED"]::before,
               .classified-doc-content [data-clearance="SECRET"]::before {
                 background: #FF9800;
                 color: white;
               }
+              .classified-doc-content [data-clearance="TOP-SECRET"]::before,
               .classified-doc-content [data-clearance="TOP_SECRET"]::before {
                 background: #f44336;
                 color: white;

@@ -11,7 +11,7 @@
 
 import React from 'react';
 import { ShieldCheckIcon, CameraIcon } from '@heroicons/react/solid';
-import { getClearanceBadgeClasses, getCredentialType } from '@/utils/credentialTypeDetector';
+import { getClearanceBadgeClasses, getCredentialType, getCredentialSubject } from '@/utils/credentialTypeDetector';
 
 interface CredentialLayoutProps {
   credential: any;
@@ -25,7 +25,8 @@ interface CredentialLayoutProps {
  * - Right: Personal details (name, DOB, gender, unique ID, dates)
  */
 export function IDCardLayout({ credential }: CredentialLayoutProps) {
-  const subject = credential.credentialSubject || credential.claims?.[0] || credential.vc?.credentialSubject;
+  // Use helper to handle all credential formats (including SDK JWTCredential with properties Map)
+  const subject = getCredentialSubject(credential);
 
   const firstName = subject?.firstName || 'Unknown';
   const lastName = subject?.lastName || '';
@@ -115,7 +116,8 @@ export function IDCardLayout({ credential }: CredentialLayoutProps) {
  * - Right: Clearance details (level with color badge, holder name, dates, keys)
  */
 export function CertificateLayout({ credential }: CredentialLayoutProps) {
-  const subject = credential.credentialSubject || credential.claims?.[0] || credential.vc?.credentialSubject;
+  // Use helper to handle all credential formats (including SDK JWTCredential with properties Map)
+  const subject = getCredentialSubject(credential);
 
   const clearanceLevel = subject?.clearanceLevel || 'UNKNOWN';
   const holderName = subject?.holderName ||

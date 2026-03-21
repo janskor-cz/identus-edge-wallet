@@ -5,9 +5,12 @@
  * Uses @yudiel/react-qr-scanner for camera access and QR detection.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Scanner as QRScanner } from '@yudiel/react-qr-scanner';
 import { parseQRMessage, validateQRMessage, MessageType, ScanResult } from '@/utils/qrMessageParser';
+
+// Camera permission states
+type CameraState = 'checking' | 'granted' | 'denied' | 'not-found' | 'error';
 
 export interface ScannerProps {
   // Extensibility: Filter by allowed message types
@@ -51,8 +54,83 @@ export const Scanner: React.FC<ScannerProps> = ({
 }) => {
   const [isPaused, setIsPaused] = useState(false);
   const [lastScan, setLastScan] = useState<string | null>(null);
-  const [scanning, setScanning] = useState(true);
+  const [scanning, setScanning] = useState(false); // Start false until camera ready
   const [error, setError] = useState<string | null>(null);
+  const [cameraState, setCameraState] = useState<CameraState>('checking');
+
+  // Check camera permissions and availability on mount
+  useEffect(() => {
+    const checkCameraAccess = async () => {
+      console.log('📷 [Scanner] Checking camera access...');
+
+      try {
+        // Check if mediaDevices API is available
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          console.error('❌ [Scanner] MediaDevices API not available');
+          setCameraState('error');
+          setError('Camera API not available. Please use a modern browser with HTTPS.');
+          return;
+        }
+
+        // Check for available video devices
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        console.log(`📷 [Scanner] Found ${videoDevices.length} camera(s):`,
+          videoDevices.map(d => d.label || 'unnamed').join(', '));
+
+        if (videoDevices.length === 0) {
+          console.error('❌ [Scanner] No camera found on device');
+          setCameraState('not-found');
+          setError('No camera found. Please connect a camera and try again.');
+          return;
+        }
+
+        // Try to get camera permission
+        console.log('📷 [Scanner] Requesting camera permission...');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: preferredCamera === 'front' ? 'user' : 'environment'
+          }
+        });
+
+        // Success! Stop the test stream
+        stream.getTracks().forEach(track => track.stop());
+        console.log('✅ [Scanner] Camera access granted');
+        setCameraState('granted');
+        setScanning(true);
+
+      } catch (err: any) {
+        console.error('❌ [Scanner] Camera access error:', err);
+
+        // Handle specific error types
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          console.error('❌ [Scanner] Camera permission denied by user');
+          setCameraState('denied');
+          setError('Camera permission denied. Please allow camera access in your browser settings and reload the page.');
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+          console.error('❌ [Scanner] No camera found');
+          setCameraState('not-found');
+          setError('No camera found. Please connect a camera and try again.');
+        } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+          console.error('❌ [Scanner] Camera is in use by another application');
+          setCameraState('error');
+          setError('Camera is in use by another application. Please close other apps using the camera.');
+        } else if (err.name === 'OverconstrainedError') {
+          console.error('❌ [Scanner] Camera constraints not satisfiable');
+          setCameraState('error');
+          setError('Camera does not support required features. Try a different camera.');
+        } else {
+          console.error('❌ [Scanner] Unknown camera error:', err.name, err.message);
+          setCameraState('error');
+          setError(`Camera error: ${err.message || err.name || 'Unknown error'}`);
+        }
+
+        onError?.(new Error(error || 'Camera access failed'));
+      }
+    };
+
+    checkCameraAccess();
+  }, [preferredCamera]);
 
   // Handle QR code detection
   const handleDecode = async (result: string) => {
@@ -113,21 +191,38 @@ export const Scanner: React.FC<ScannerProps> = ({
 
   // Handle scanner errors (camera access, etc.)
   const handleError = (err: unknown) => {
-    const error = err instanceof Error ? err : new Error('Scanner error');
-    console.error('❌ [Scanner] Camera error:', error.message);
+    // Handle empty object rejections from @yudiel/react-qr-scanner
+    let errorMessage = 'Scanner error';
 
-    // Common error messages
-    let userMessage = error.message;
-    if (error.message.includes('Permission')) {
-      userMessage = 'Camera permission denied. Please allow camera access in your browser settings.';
-    } else if (error.message.includes('NotFound')) {
-      userMessage = 'No camera found. Please check your device has a working camera.';
-    } else if (error.message.includes('NotAllowed')) {
-      userMessage = 'Camera access blocked. Please enable camera permissions for this site.';
+    if (err === null || err === undefined) {
+      console.error('❌ [Scanner] Received null/undefined error');
+      errorMessage = 'Scanner failed to initialize. Please check camera permissions.';
+    } else if (typeof err === 'object' && Object.keys(err as object).length === 0) {
+      // Empty object {} - common issue with this library
+      console.error('❌ [Scanner] Received empty error object {}');
+      errorMessage = 'Camera initialization failed. Please ensure camera permissions are granted and no other app is using the camera.';
+    } else if (err instanceof Error) {
+      console.error('❌ [Scanner] Camera error:', err.name, err.message);
+      errorMessage = err.message;
+    } else if (typeof err === 'string') {
+      console.error('❌ [Scanner] Camera error string:', err);
+      errorMessage = err;
+    } else {
+      console.error('❌ [Scanner] Unknown error type:', typeof err, err);
+      errorMessage = 'Unknown scanner error occurred.';
     }
 
-    setError(userMessage);
-    onError?.(new Error(userMessage));
+    // Enhance common error messages
+    if (errorMessage.includes('Permission') || errorMessage.includes('NotAllowed')) {
+      errorMessage = 'Camera permission denied. Please allow camera access in your browser settings and reload.';
+    } else if (errorMessage.includes('NotFound')) {
+      errorMessage = 'No camera found. Please check your device has a working camera.';
+    }
+
+    console.error('❌ [Scanner] Final error message:', errorMessage);
+    setError(errorMessage);
+    setCameraState('error');
+    onError?.(new Error(errorMessage));
   };
 
   // Reset scanner
@@ -143,19 +238,70 @@ export const Scanner: React.FC<ScannerProps> = ({
     <div className={`scanner-container ${className}`}>
       {/* Scanner view */}
       <div className="scanner-view relative">
-        {scanning && (
+        {/* Camera checking state */}
+        {cameraState === 'checking' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+            <div className="text-center text-white">
+              <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+              <p className="text-lg font-semibold">Checking camera access...</p>
+              <p className="text-sm text-gray-400 mt-2">Please allow camera permission if prompted</p>
+            </div>
+          </div>
+        )}
+
+        {/* Camera permission denied state */}
+        {cameraState === 'denied' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-red-900 p-6">
+            <div className="text-center text-white max-w-md">
+              <div className="text-6xl mb-4">🚫</div>
+              <p className="text-xl font-semibold mb-2">Camera Permission Denied</p>
+              <p className="text-sm mb-4">Please allow camera access in your browser settings:</p>
+              <ol className="text-left text-sm space-y-2 mb-4">
+                <li>1. Click the camera/lock icon in the address bar</li>
+                <li>2. Allow camera access for this site</li>
+                <li>3. Reload the page</li>
+              </ol>
+              <button
+                onClick={() => window.location.reload()}
+                className="px-6 py-2 bg-white text-red-600 rounded-lg font-semibold hover:bg-gray-100"
+              >
+                Reload Page
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* No camera found state */}
+        {cameraState === 'not-found' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-yellow-900 p-6">
+            <div className="text-center text-white max-w-md">
+              <div className="text-6xl mb-4">📷</div>
+              <p className="text-xl font-semibold mb-2">No Camera Found</p>
+              <p className="text-sm">Please connect a camera to your device and try again.</p>
+              <button
+                onClick={() => window.location.reload()}
+                className="mt-4 px-6 py-2 bg-white text-yellow-600 rounded-lg font-semibold hover:bg-gray-100"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Scanner ready - show QR scanner */}
+        {cameraState === 'granted' && scanning && (
           <QRScanner
             onDecode={handleDecode}
             onError={handleError}
             paused={isPaused}
             constraints={{
               facingMode: preferredCamera === 'front' ? 'user' : 'environment',
-              aspectRatio: 1,
             }}
             scanDelay={500} // Prevent rapid duplicate scans
             components={{
-              audio: true, // Beep on successful scan
-              torch: enableTorch,
+              audio: false, // Disabled - causes Safari/iOS crash
+              torch: false, // Disabled - not supported on all devices
+              finder: true, // Show viewfinder overlay
             }}
             styles={{
               container: {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { InviterIdentity, FIELD_LABELS } from '../types/invitations';
 import { VerificationBadge } from './VerificationBadge';
 import { VCProofDisplay } from './VCProofDisplay';
@@ -7,6 +7,76 @@ import { invitationStateManager } from '../utils/InvitationStateManager';
 import { useAppSelector } from '../reducers/store';
 import { ValidatedCAConfig } from '../utils/caValidation';
 import { ValidatedCompanyConfig } from '../utils/companyValidation';
+import { getCredentialType } from '../utils/credentialTypeDetector';
+
+/**
+ * Simplified display component for RealPersonIdentity credentials
+ * Shows a clean profile view with verification status
+ */
+const RealPersonIdentityDisplay: React.FC<{
+  revealedData: Record<string, any>;
+  isVerified: boolean;
+}> = ({ revealedData, isVerified }) => {
+  const displayFields = [
+    { key: 'firstName', label: 'First Name' },
+    { key: 'lastName', label: 'Last Name' },
+    { key: 'uniqueId', label: 'Unique ID' },
+    { key: 'dateOfBirth', label: 'Date of Birth' },
+    { key: 'gender', label: 'Gender' },
+    { key: 'nationality', label: 'Nationality' },
+    { key: 'placeOfBirth', label: 'Place of Birth' },
+  ].filter(f => revealedData[f.key]);
+
+  const borderColor = isVerified
+    ? 'border-green-200 dark:border-green-700'
+    : 'border-amber-200 dark:border-amber-700';
+  const bgGradient = isVerified
+    ? 'from-green-50 to-emerald-50 dark:from-green-900/30 dark:to-emerald-900/30'
+    : 'from-amber-50 to-yellow-50 dark:from-amber-900/30 dark:to-yellow-900/30';
+
+  return (
+    <div className="space-y-4">
+      <div className={`rounded-lg p-5 bg-gradient-to-br ${bgGradient} border-2 ${borderColor}`}>
+        {/* Profile header */}
+        <div className="flex items-start space-x-4 mb-4">
+          <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl ${
+            isVerified ? 'bg-green-100 dark:bg-green-800' : 'bg-amber-100 dark:bg-amber-800'
+          }`}>
+            👤
+          </div>
+          <div className="flex-1">
+            {(revealedData.firstName || revealedData.lastName) && (
+              <h4 className="text-xl font-bold text-gray-900 dark:text-white">
+                {[revealedData.firstName, revealedData.lastName].filter(Boolean).join(' ')}
+              </h4>
+            )}
+            {revealedData.uniqueId && (
+              <p className="text-sm font-mono text-gray-600 dark:text-gray-400">
+                ID: {revealedData.uniqueId}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Additional fields grid */}
+        {displayFields.filter(f => !['firstName', 'lastName', 'uniqueId'].includes(f.key)).length > 0 && (
+          <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-200 dark:border-gray-600">
+            {displayFields
+              .filter(f => !['firstName', 'lastName', 'uniqueId'].includes(f.key))
+              .map(field => (
+                <div key={field.key}>
+                  <p className="text-xs font-semibold text-gray-500 uppercase">{field.label}</p>
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">
+                    {revealedData[field.key]}
+                  </p>
+                </div>
+              ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 interface InvitationPreviewModalProps {
   isOpen: boolean;
@@ -39,6 +109,8 @@ interface InvitationPreviewModalProps {
   walletType?: 'local' | 'cloud';
   cloudConfig?: any;
   onWalletSelect?: (walletType: 'local' | 'cloud') => void;
+  // ✅ REALPERSON UX: Default wallet type from connections page context
+  defaultWalletType?: 'local' | 'cloud';
 }
 
 export const InvitationPreviewModal: React.FC<InvitationPreviewModalProps> = ({
@@ -66,10 +138,92 @@ export const InvitationPreviewModal: React.FC<InvitationPreviewModalProps> = ({
   // ✅ WALLET SELECTION: Extract wallet selection props
   walletType = 'local',
   cloudConfig,
-  onWalletSelect
+  onWalletSelect,
+  // ✅ REALPERSON UX: Extract default wallet type
+  defaultWalletType
 }) => {
   const [isAccepting, setIsAccepting] = useState(false);
+  const [walletSelectionExpanded, setWalletSelectionExpanded] = useState(false);
   const app = useAppSelector((state) => state.app);
+
+  // ✅ REALPERSON UX: Detect if invitation has RealPersonIdentity credential attached
+  const isRealPersonInvitation = useMemo(() => {
+    if (!inviterIdentity?.vcProof || !inviterIdentity?.revealedData) return false;
+
+    // Check if revealedData has credentialType field or characteristic RealPerson fields
+    const revealedData = inviterIdentity.revealedData;
+
+    // Method 1: Check credentialType field
+    if (revealedData.credentialType === 'RealPersonIdentity') return true;
+
+    // Method 2: Check for characteristic RealPerson fields (firstName, lastName, uniqueId)
+    const hasRealPersonFields = revealedData.firstName && revealedData.lastName && revealedData.uniqueId;
+    if (hasRealPersonFields) return true;
+
+    // Method 3: Use getCredentialType helper with mock credential structure
+    const mockCredential = { credentialSubject: revealedData };
+    const credType = getCredentialType(mockCredential);
+
+    console.log('[MODAL] Detected invitation credential type:', credType);
+    return credType === 'RealPersonIdentity';
+  }, [inviterIdentity]);
+
+  // ✅ REALPERSON UX: Dynamic header configuration based on verification status
+  const headerConfig = useMemo(() => {
+    if (!isRealPersonInvitation) {
+      return {
+        title: 'Connection Invitation',
+        subtitle: 'Review invitation details before accepting',
+        bgClass: 'bg-white dark:bg-gray-800',
+        iconBgClass: 'bg-blue-100 dark:bg-blue-900',
+        iconTextClass: 'text-blue-600 dark:text-blue-400',
+        icon: '🔗'
+      };
+    }
+
+    if (inviterIdentity?.isVerified) {
+      return {
+        title: 'Verified Connection Invitation',
+        subtitle: 'Identity verified via credential proof',
+        bgClass: 'bg-green-50 dark:bg-green-900/30',
+        iconBgClass: 'bg-green-100 dark:bg-green-800',
+        iconTextClass: 'text-green-600 dark:text-green-400',
+        icon: '✅'
+      };
+    }
+
+    return {
+      title: 'Unverified Connection Invitation',
+      subtitle: 'Identity could not be verified',
+      bgClass: 'bg-amber-50 dark:bg-amber-900/30',
+      iconBgClass: 'bg-amber-100 dark:bg-amber-800',
+      iconTextClass: 'text-amber-600 dark:text-amber-400',
+      icon: '⚠️'
+    };
+  }, [isRealPersonInvitation, inviterIdentity?.isVerified]);
+
+  // ✅ REALPERSON UX: Set default wallet type from connections page context
+  useEffect(() => {
+    if (isOpen && defaultWalletType && onWalletSelect) {
+      console.log('[MODAL] Setting default wallet type:', defaultWalletType);
+      onWalletSelect(defaultWalletType);
+    }
+  }, [isOpen, defaultWalletType, onWalletSelect]);
+
+  // ✅ REALPERSON UX: Auto-select first RealPersonIdentity credential when modal opens
+  useEffect(() => {
+    if (!isOpen || !isRealPersonInvitation || !availableCredentials?.length) return;
+    if (selectedVCForRequest) return; // Don't override existing selection
+
+    const realPersonVC = availableCredentials.find(cred =>
+      getCredentialType(cred) === 'RealPersonIdentity'
+    );
+
+    if (realPersonVC && onVCSelectionChange) {
+      console.log('[MODAL] Auto-selecting RealPersonIdentity credential for response');
+      onVCSelectionChange(realPersonVC);
+    }
+  }, [isOpen, isRealPersonInvitation, availableCredentials, selectedVCForRequest, onVCSelectionChange]);
 
   // ✅ PHASE 3: Mark invitation as previewed when modal opens
   useEffect(() => {
@@ -131,18 +285,18 @@ export const InvitationPreviewModal: React.FC<InvitationPreviewModalProps> = ({
       {/* Modal Container */}
       <div className="flex min-h-full items-center justify-center p-4">
         <div className="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-          {/* Modal Header */}
-          <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between z-10">
+          {/* Modal Header - Dynamic based on RealPerson detection */}
+          <div className={`sticky top-0 ${headerConfig.bgClass} border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between z-10`}>
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900 rounded-lg flex items-center justify-center">
-                <span className="text-blue-600 dark:text-blue-400 text-xl">🔗</span>
+              <div className={`w-10 h-10 ${headerConfig.iconBgClass} rounded-lg flex items-center justify-center`}>
+                <span className={`${headerConfig.iconTextClass} text-xl`}>{headerConfig.icon}</span>
               </div>
               <div>
                 <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                  Connection Invitation
+                  {headerConfig.title}
                 </h2>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Review invitation details before accepting
+                  {headerConfig.subtitle}
                 </p>
               </div>
             </div>
@@ -194,8 +348,8 @@ export const InvitationPreviewModal: React.FC<InvitationPreviewModalProps> = ({
                   </div>
                 )}
 
-                {/* Inviter DID */}
-                {invitationData?.from && (
+                {/* Inviter DID - Hidden for RealPerson invitations */}
+                {!isRealPersonInvitation && invitationData?.from && (
                   <div className="space-y-1">
                     <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase">
                       Inviter DID:
@@ -554,16 +708,26 @@ export const InvitationPreviewModal: React.FC<InvitationPreviewModalProps> = ({
               </div>
             )}
 
-            {/* VC Proof Section - ✅ PHASE 4 FIX: Display if vcProof exists (more reliable) */}
+            {/* VC Proof Section - Conditional rendering for RealPerson vs other types */}
             {inviterIdentity && inviterIdentity.vcProof && (
               <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
-                  Attached Credential Proof:
-                </h3>
-
-                <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-                  <VCProofDisplay inviterIdentity={inviterIdentity} />
-                </div>
+                {isRealPersonInvitation ? (
+                  /* ✅ REALPERSON UX: Simplified identity display */
+                  <RealPersonIdentityDisplay
+                    revealedData={inviterIdentity.revealedData}
+                    isVerified={inviterIdentity.isVerified}
+                  />
+                ) : (
+                  /* Standard VC Proof display for other credential types */
+                  <>
+                    <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                      Attached Credential Proof:
+                    </h3>
+                    <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                      <VCProofDisplay inviterIdentity={inviterIdentity} />
+                    </div>
+                  </>
+                )}
 
                 {/* ✅ PHASE 2: Show validation warnings for unverified credentials */}
                 {!inviterIdentity.isVerified && inviterIdentity.validationResult.warnings && inviterIdentity.validationResult.warnings.length > 0 && (
@@ -648,7 +812,7 @@ export const InvitationPreviewModal: React.FC<InvitationPreviewModalProps> = ({
                       <SelectiveDisclosure
                         credential={selectedVCForRequest}
                         onFieldSelection={onFieldSelection}
-                        initialLevel="minimal"
+                        initialLevel={isRealPersonInvitation ? 'standard' : 'minimal'}
                       />
                     </div>
                   )}
@@ -700,105 +864,125 @@ export const InvitationPreviewModal: React.FC<InvitationPreviewModalProps> = ({
               </div>
             </div>
 
-            {/* Wallet Selection Section */}
+            {/* Wallet Selection Section - Collapsible */}
             {onWalletSelect && (
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
-                  🔐 Select Wallet to Accept Connection:
-                </h3>
-
-                <div className="space-y-3">
-                  {/* Personal Local Wallet Option */}
-                  <label
-                    className={`flex items-start space-x-4 p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                      walletType === 'local'
-                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30'
-                        : 'border-gray-300 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="wallet-selection"
-                      value="local"
-                      checked={walletType === 'local'}
-                      onChange={() => onWalletSelect('local')}
-                      className="mt-1 w-4 h-4 text-blue-600 focus:ring-blue-500"
-                    />
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <span className="text-lg">💻</span>
-                        <p className="font-semibold text-gray-900 dark:text-white">
-                          Personal Local Wallet
-                        </p>
-                      </div>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        Connection stored in your browser's local wallet (IndexedDB).
-                        Full control, always available.
-                      </p>
-                    </div>
-                  </label>
-
-                  {/* Enterprise Cloud Wallet Option */}
-                  <label
-                    className={`flex items-start space-x-4 p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                      walletType === 'cloud'
-                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30'
-                        : cloudConfig
-                        ? 'border-gray-300 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700'
-                        : 'border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 opacity-60 cursor-not-allowed'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="wallet-selection"
-                      value="cloud"
-                      checked={walletType === 'cloud'}
-                      onChange={() => cloudConfig && onWalletSelect('cloud')}
-                      disabled={!cloudConfig}
-                      className="mt-1 w-4 h-4 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
-                    />
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <span className="text-lg">☁️</span>
-                        <p className="font-semibold text-gray-900 dark:text-white">
-                          Enterprise Cloud Wallet
-                          {cloudConfig && (
-                            <span className="ml-2 text-xs text-green-600 dark:text-green-400">
-                              ✓ Available
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      {cloudConfig ? (
-                        <>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                            Connection managed by {cloudConfig.enterpriseAgentName || 'Enterprise Cloud Agent'}.
-                            Company-managed enterprise identity.
-                          </p>
-                          <div className="text-xs text-gray-500 dark:text-gray-500 space-y-1">
-                            <p>🏢 Agent: {cloudConfig.enterpriseAgentName || 'Enterprise Agent'}</p>
-                            <p>🔗 URL: {cloudConfig.enterpriseAgentUrl || 'N/A'}</p>
-                          </div>
-                        </>
-                      ) : (
-                        <p className="text-sm text-gray-500 dark:text-gray-500">
-                          ⚠️ Enterprise wallet not configured. Accept a ServiceConfiguration VC to enable.
-                        </p>
-                      )}
-                    </div>
-                  </label>
-                </div>
-
-                {/* Info Notice */}
-                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
-                  <div className="flex items-start space-x-2">
-                    <span className="text-yellow-600 dark:text-yellow-400 text-sm flex-shrink-0 mt-0.5">💡</span>
-                    <p className="text-xs text-yellow-800 dark:text-yellow-200">
-                      <strong>Choose carefully:</strong> This determines which wallet will store the connection.
-                      Personal wallet for private connections, Enterprise wallet for company-managed identities.
-                    </p>
+              <div className="space-y-3">
+                {/* Collapsible Header */}
+                <button
+                  onClick={() => setWalletSelectionExpanded(!walletSelectionExpanded)}
+                  className="w-full flex items-center justify-between text-left py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                >
+                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide flex items-center space-x-2">
+                    <span>🔐</span>
+                    <span>Wallet Selection</span>
+                  </h3>
+                  <div className="flex items-center space-x-3">
+                    {/* Show current selection when collapsed */}
+                    {!walletSelectionExpanded && (
+                      <span className="text-sm text-gray-600 dark:text-gray-400 flex items-center space-x-1">
+                        <span>{walletType === 'local' ? '💻' : '☁️'}</span>
+                        <span>{walletType === 'local' ? 'Personal' : 'Enterprise'}</span>
+                      </span>
+                    )}
+                    <span className="text-gray-400 text-sm">{walletSelectionExpanded ? '▲' : '▼'}</span>
                   </div>
-                </div>
+                </button>
+
+                {/* Collapsible Content */}
+                {walletSelectionExpanded && (
+                  <div className="space-y-3 pl-2">
+                    {/* Personal Local Wallet Option */}
+                    <label
+                      className={`flex items-start space-x-4 p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                        walletType === 'local'
+                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30'
+                          : 'border-gray-300 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="wallet-selection"
+                        value="local"
+                        checked={walletType === 'local'}
+                        onChange={() => onWalletSelect('local')}
+                        className="mt-1 w-4 h-4 text-blue-600 focus:ring-blue-500"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2 mb-1">
+                          <span className="text-lg">💻</span>
+                          <p className="font-semibold text-gray-900 dark:text-white">
+                            Personal Local Wallet
+                          </p>
+                        </div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                          Connection stored in your browser's local wallet (IndexedDB).
+                          Full control, always available.
+                        </p>
+                      </div>
+                    </label>
+
+                    {/* Enterprise Cloud Wallet Option */}
+                    <label
+                      className={`flex items-start space-x-4 p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                        walletType === 'cloud'
+                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30'
+                          : cloudConfig
+                          ? 'border-gray-300 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-700'
+                          : 'border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 opacity-60 cursor-not-allowed'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="wallet-selection"
+                        value="cloud"
+                        checked={walletType === 'cloud'}
+                        onChange={() => cloudConfig && onWalletSelect('cloud')}
+                        disabled={!cloudConfig}
+                        className="mt-1 w-4 h-4 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2 mb-1">
+                          <span className="text-lg">☁️</span>
+                          <p className="font-semibold text-gray-900 dark:text-white">
+                            Enterprise Cloud Wallet
+                            {cloudConfig && (
+                              <span className="ml-2 text-xs text-green-600 dark:text-green-400">
+                                ✓ Available
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                        {cloudConfig ? (
+                          <>
+                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                              Connection managed by {cloudConfig.enterpriseAgentName || 'Enterprise Cloud Agent'}.
+                              Company-managed enterprise identity.
+                            </p>
+                            <div className="text-xs text-gray-500 dark:text-gray-500 space-y-1">
+                              <p>🏢 Agent: {cloudConfig.enterpriseAgentName || 'Enterprise Agent'}</p>
+                              <p>🔗 URL: {cloudConfig.enterpriseAgentUrl || 'N/A'}</p>
+                            </div>
+                          </>
+                        ) : (
+                          <p className="text-sm text-gray-500 dark:text-gray-500">
+                            ⚠️ Enterprise wallet not configured. Accept a ServiceConfiguration VC to enable.
+                          </p>
+                        )}
+                      </div>
+                    </label>
+
+                    {/* Info Notice */}
+                    <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                      <div className="flex items-start space-x-2">
+                        <span className="text-yellow-600 dark:text-yellow-400 text-sm flex-shrink-0 mt-0.5">💡</span>
+                        <p className="text-xs text-yellow-800 dark:text-yellow-200">
+                          <strong>Choose carefully:</strong> This determines which wallet will store the connection.
+                          Personal wallet for private connections, Enterprise wallet for company-managed identities.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

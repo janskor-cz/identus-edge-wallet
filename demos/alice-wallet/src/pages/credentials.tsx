@@ -164,8 +164,11 @@ export default function App() {
                             identity.push(credential);
                         } else if (type === 'SecurityClearance') {
                             clearance.push(credential);
+                        } else if (type === 'CertificationAuthorityIdentity') {
+                            // Skip - these are issuer/organization identity credentials, not user's own VCs
+                            console.log('⏭️ [Credentials] Skipping issuer credential:', type);
                         } else {
-                            // Unknown types go in identity for now
+                            // Other types (EmployeeRole, ServiceConfiguration, etc.) go in identity
                             identity.push(credential);
                         }
                     }

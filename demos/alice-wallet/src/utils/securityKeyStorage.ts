@@ -44,7 +44,8 @@ export function loadSecurityKeys(): SecurityKeyStorage {
   try {
     const stored = getItem(STORAGE_KEY);
     if (stored) {
-      return JSON.parse(stored) as SecurityKeyStorage;
+      // getItem() already parses JSON, so just return the object directly
+      return stored as SecurityKeyStorage;
     }
   } catch (error) {
     console.error('Failed to load security keys:', error);
@@ -58,7 +59,8 @@ export function loadSecurityKeys(): SecurityKeyStorage {
  */
 export function saveSecurityKeys(storage: SecurityKeyStorage): void {
   try {
-    setItem(STORAGE_KEY, JSON.stringify(storage));
+    // setItem() already stringifies objects, so pass the object directly
+    setItem(STORAGE_KEY, storage);
   } catch (error) {
     console.error('Failed to save security keys:', error);
   }

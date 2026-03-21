@@ -220,8 +220,9 @@ export class CreatePresentation extends Task<Presentation, Args> {
       }
       const subjectDID = Domain.DID.from(credential.subject);
       const prismPrivateKeys = await ctx.Pluto.getDIDPrivateKeysByDID(subjectDID);
-      // Cloud Agent requires EdDSA (Ed25519) signatures for presentation verification
-      const prismPrivateKey = prismPrivateKeys.find((key) => key.curve === Domain.Curve.ED25519);
+      // JWT credentials use SECP256K1 keys (ES256K algorithm) - matches HandleOfferCredential.ts
+      // SECP256K1 keys are created at lines 105-109 in HandleOfferCredential.ts for JWT credentials
+      const prismPrivateKey = prismPrivateKeys.find((key) => key.curve === Domain.Curve.SECP256K1);
       if (prismPrivateKey === undefined) {
         throw new Domain.AgentError.CannotFindDIDPrivateKey();
       }

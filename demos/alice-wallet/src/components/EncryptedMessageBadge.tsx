@@ -22,11 +22,11 @@ function getBadgeColorClasses(level: SecurityLevel, canDecrypt: boolean): string
   switch (level) {
     case SecurityLevel.TOP_SECRET:
       return `bg-red-500 text-white border-red-600 ${opacity}`;
-    case SecurityLevel.SECRET:
+    case SecurityLevel.RESTRICTED:
       return `bg-orange-500 text-white border-orange-600 ${opacity}`;
     case SecurityLevel.CONFIDENTIAL:
       return `bg-yellow-500 text-white border-yellow-600 ${opacity}`;
-    case SecurityLevel.UNCLASSIFIED:
+    case SecurityLevel.INTERNAL:
     default:
       return `bg-green-500 text-white border-green-600 ${opacity}`;
   }
@@ -37,7 +37,7 @@ export const EncryptedMessageBadge: React.FC<EncryptedMessageBadgeProps> = ({
   canDecrypt
 }) => {
   // Hide badge for unclassified messages
-  if (level === SecurityLevel.UNCLASSIFIED) {
+  if (level === SecurityLevel.INTERNAL) {
     return null;
   }
 

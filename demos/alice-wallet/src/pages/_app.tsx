@@ -44,10 +44,9 @@ function App({ Component, pageProps }) {
         }
 
         // Initialize Console Logger (captures browser logs to server)
-        // ❌ DISABLED: ConsoleLogger was creating excessive console output
-        // if (typeof window !== 'undefined') {
-        //     initConsoleLogger('alice');
-        // }
+        if (typeof window !== 'undefined') {
+            initConsoleLogger('alice');
+        }
 
         // 🧪 Expose test functions for debugging encrypted messaging
         if (typeof window !== 'undefined') {

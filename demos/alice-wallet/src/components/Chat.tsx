@@ -22,7 +22,7 @@ export const Chat: React.FC<ChatProps> = ({ messages, connection, onSendMessage 
   const [messageText, setMessageText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [selectedSecurityLevel, setSelectedSecurityLevel] = useState<SecurityLevel>(SecurityLevel.UNCLASSIFIED);
+  const [selectedSecurityLevel, setSelectedSecurityLevel] = useState<SecurityLevel>(SecurityLevel.INTERNAL);
 
   // ✅ NEW: Store decrypted message content (cache)
   const [decryptedMessages, setDecryptedMessages] = useState<Map<string, string>>(new Map());
@@ -71,7 +71,7 @@ export const Chat: React.FC<ChatProps> = ({ messages, connection, onSendMessage 
   );
   const userMaxLevel = userSecurityClearanceVC
     ? getVCClearanceLevel(userSecurityClearanceVC)
-    : SecurityLevel.UNCLASSIFIED;
+    : SecurityLevel.INTERNAL;
 
   // ✅ NEW: Check user's security clearance revocation status
   useEffect(() => {
@@ -246,6 +246,26 @@ export const Chat: React.FC<ChatProps> = ({ messages, connection, onSendMessage 
           console.log('🔑 [Chat] Using X25519 encryption keys for decryption');
           console.log('   User X25519 fingerprint:', userX25519Fingerprint.substring(0, 20) + '...');
 
+          // KEY VERIFICATION: For RECEIVED messages, verify our public key matches what sender used
+          if (message.direction === 1) {  // RECEIVED
+            const messageRecipientKey = encryptedBody.encryptionMeta.recipientPublicKey;
+            const ourPublicKeyBase64 = base64url.encode(userX25519PublicKey);
+
+            console.log('🔐 [Chat] KEY VERIFICATION:');
+            console.log('   Message encrypted for (recipientPublicKey):', messageRecipientKey.substring(0, 32) + '...');
+            console.log('   Our public key (from VC):', ourPublicKeyBase64.substring(0, 32) + '...');
+
+            if (messageRecipientKey !== ourPublicKeyBase64) {
+              console.error('❌ [Chat] KEY MISMATCH! Message was encrypted for a DIFFERENT public key.');
+              console.error('   This means the sender has an OLD version of your Security Clearance VC.');
+              console.error('   You may have regenerated your encryption keys since the last VC handshake.');
+              newDecrypted.set(message.id, '🔒 [KEY MISMATCH - Sender has old VC. Re-exchange VCs needed]');
+              hasNewDecryptions = true;
+              continue;
+            }
+            console.log('✅ [Chat] Keys match - decryption should succeed');
+          }
+
           // Select the OTHER party's public key based on message direction
           // SENT (0): Use recipientPublicKey (we encrypted FOR them)
           // RECEIVED (1): Use senderPublicKey (they encrypted FOR us)
@@ -349,7 +369,7 @@ export const Chat: React.FC<ChatProps> = ({ messages, connection, onSendMessage 
     setSendError(null);
 
     // ✅ SECURITY CHECK: Verify clearance validity before sending encrypted message
-    if (selectedSecurityLevel !== SecurityLevel.UNCLASSIFIED) {
+    if (selectedSecurityLevel !== SecurityLevel.INTERNAL) {
       // Check if clearance is revoked
       if (clearanceRevoked) {
         setMessageText(messageContent); // Restore message
@@ -372,7 +392,7 @@ export const Chat: React.FC<ChatProps> = ({ messages, connection, onSendMessage 
 
     // Add clearance label prefix for classified messages
     let finalMessageContent = messageContent;
-    if (selectedSecurityLevel !== SecurityLevel.UNCLASSIFIED) {
+    if (selectedSecurityLevel !== SecurityLevel.INTERNAL) {
       const levelName = SECURITY_LEVEL_NAMES[selectedSecurityLevel];
       finalMessageContent = `${levelName} - ${messageContent}`;
     }
@@ -380,7 +400,7 @@ export const Chat: React.FC<ChatProps> = ({ messages, connection, onSendMessage 
     try {
       await onSendMessage(finalMessageContent, otherDID, selectedSecurityLevel);
       // Message sent successfully - reset to unclassified
-      setSelectedSecurityLevel(SecurityLevel.UNCLASSIFIED);
+      setSelectedSecurityLevel(SecurityLevel.INTERNAL);
     } catch (error: any) {
       // On error, restore the message text so user can retry
       setMessageText(messageContent);
@@ -503,9 +523,9 @@ export const Chat: React.FC<ChatProps> = ({ messages, connection, onSendMessage 
         return parseSecurityLevel(extraHeaders.securityLevel);
       }
 
-      return SecurityLevel.UNCLASSIFIED;
+      return SecurityLevel.INTERNAL;
     } catch (e) {
-      return SecurityLevel.UNCLASSIFIED;
+      return SecurityLevel.INTERNAL;
     }
   };
 
@@ -604,7 +624,7 @@ export const Chat: React.FC<ChatProps> = ({ messages, connection, onSendMessage 
                   }`}
                 >
                   {/* Security Level Badge (for encrypted messages) */}
-                  {isEncrypted && securityLevel !== SecurityLevel.UNCLASSIFIED && (
+                  {isEncrypted && securityLevel !== SecurityLevel.INTERNAL && (
                     <div className="mb-2">
                       <EncryptedMessageBadge level={securityLevel} canDecrypt={canDecrypt} />
                     </div>

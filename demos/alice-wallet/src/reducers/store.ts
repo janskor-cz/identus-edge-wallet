@@ -24,6 +24,11 @@ const initialClassifiedDocumentsState: ClassifiedDocumentsState = {
 };
 
 
+// Expose store globally for debugging
+if (typeof window !== 'undefined') {
+    (window as any).__REDUX_STORE__ = null; // Will be set after store creation
+}
+
 export const store = configureStore({
     reducer: rootReducer,
     devTools: false,
@@ -121,6 +126,11 @@ export const store = configureStore({
             }
         })
 });
+
+// Expose store globally for debugging (after creation)
+if (typeof window !== 'undefined') {
+    (window as any).__REDUX_STORE__ = store;
+}
 
 export type AppDispatch = typeof store.dispatch;
 export const useAppDispatch = () => useDispatch<AppDispatch>();

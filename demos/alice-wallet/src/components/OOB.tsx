@@ -1051,7 +1051,8 @@ export const OOB: React.FC<OOBProps> = (props) => {
                                 const prismResult = await app.dispatch(createLongFormPrismDID({
                                     agent,
                                     alias: connectionLabel || 'OOB Connection',
-                                    defaultSeed: app.defaultSeed
+                                    defaultSeed: app.defaultSeed,
+                                    mediatorUri: 'https://identuslabel.cz/mediator'
                                 })).unwrap();
                                 createdPrismDid = prismResult.did.toString();
                                 console.log('✅ [OOB] PRISM DID created:', createdPrismDid.substring(0, 50) + '...');
@@ -2178,6 +2179,8 @@ export const OOB: React.FC<OOBProps> = (props) => {
                 walletType={walletType}
                 cloudConfig={cloudConfig}
                 onWalletSelect={(type) => setWalletType(type)}
+                // ✅ REALPERSON UX: Pass default wallet type from wallet context
+                defaultWalletType={walletContext === 'enterprise' ? 'cloud' : 'local'}
             />
         </div>
     );

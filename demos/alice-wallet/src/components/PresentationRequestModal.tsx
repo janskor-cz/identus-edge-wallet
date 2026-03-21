@@ -6,6 +6,7 @@ import { SecurityKeyStorage, SecurityKeyDual, isDualKey } from '@/types/security
 import { verifyCredentialStatus, CredentialStatus } from '@/utils/credentialStatus';
 import { getItem, setItem, removeItem, getKeysByPattern } from '@/utils/prefixedStorage';
 import { getSchemaDisplayName, matchesSchema } from '@/utils/schemaMapping';
+import { filterCredentialsForProofRequest } from '@/utils/credentialFilterRules';
 
 /**
  * PresentationRequestModal Component
@@ -108,7 +109,18 @@ export const PresentationRequestModal: React.FC = () => {
                     return !isInvalid;
                 }).map(result => result.cred);
 
-                setValidCredentials(validCredsForDropdown);
+                // Apply purpose-based filtering (remove system credentials, match request type)
+                const requestBody = currentRequest.requestMessage?.body as any;
+                const requestPurpose = {
+                    goalCode: requestBody?.goal_code || requestBody?.goalCode,
+                    schemaId: currentRequest.schemaId,
+                    comment: requestBody?.comment || requestBody?.goal
+                };
+
+                const purposeFilteredCreds = filterCredentialsForProofRequest(validCredsForDropdown, requestPurpose);
+                console.log(`🎯 [PRESENTATION] Purpose filtering: ${validCredsForDropdown.length} -> ${purposeFilteredCreds.length} credentials`);
+
+                setValidCredentials(purposeFilteredCreds);
 
                 const totalFilteredOut = credentials.length - validCredsForDropdown.length;
                 if (totalFilteredOut > 0) {
@@ -118,8 +130,8 @@ export const PresentationRequestModal: React.FC = () => {
                 if (schemaId) {
                     console.log('🔍 [PRESENTATION] Auto-selecting credential for schema:', schemaId);
 
-                    // Find credentials matching the schema (from valid credentials only)
-                    const matchingCredentials = validCredsForDropdown.filter(cred =>
+                    // Find credentials matching the schema (from purpose-filtered credentials)
+                    const matchingCredentials = purposeFilteredCreds.filter(cred =>
                         matchesSchema(cred, schemaId)
                     );
 

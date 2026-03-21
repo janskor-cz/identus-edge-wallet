@@ -9,15 +9,13 @@
  * Security classification levels (hierarchical)
  * Higher numeric values indicate higher clearance requirements
  *
- * Matches CA clearance levels exactly:
- * - UNCLASSIFIED: No credential required
- * - INTERNAL: Requires "internal" clearance credential
- * - CONFIDENTIAL: Requires "confidential" clearance credential
- * - RESTRICTED: Requires "restricted" clearance credential
- * - TOP_SECRET: Requires "top-secret" clearance credential
+ * Standardized to CA Portal naming:
+ * - INTERNAL (1): Basic organizational access
+ * - CONFIDENTIAL (2): Sensitive business information
+ * - RESTRICTED (3): Highly sensitive strategic information
+ * - TOP_SECRET (4): Classified information (highest)
  */
 export enum SecurityLevel {
-  UNCLASSIFIED = 0,
   INTERNAL = 1,
   CONFIDENTIAL = 2,
   RESTRICTED = 3,
@@ -28,7 +26,6 @@ export enum SecurityLevel {
  * Human-readable names for security levels
  */
 export const SECURITY_LEVEL_NAMES: Record<SecurityLevel, string> = {
-  [SecurityLevel.UNCLASSIFIED]: 'UNCLASSIFIED',
   [SecurityLevel.INTERNAL]: 'INTERNAL',
   [SecurityLevel.CONFIDENTIAL]: 'CONFIDENTIAL',
   [SecurityLevel.RESTRICTED]: 'RESTRICTED',
@@ -57,14 +54,14 @@ export function parseSecurityLevel(level: string): SecurityLevel {
     case 'TOPSECRET':
       return SecurityLevel.TOP_SECRET;
     case 'RESTRICTED':
+    case 'SECRET':  // Legacy: map old SECRET to RESTRICTED
       return SecurityLevel.RESTRICTED;
     case 'CONFIDENTIAL':
       return SecurityLevel.CONFIDENTIAL;
     case 'INTERNAL':
-      return SecurityLevel.INTERNAL;
-    case 'UNCLASSIFIED':
+    case 'UNCLASSIFIED':  // Legacy: map old UNCLASSIFIED to INTERNAL
     default:
-      return SecurityLevel.UNCLASSIFIED;
+      return SecurityLevel.INTERNAL;
   }
 }
 
@@ -73,11 +70,10 @@ export function parseSecurityLevel(level: string): SecurityLevel {
  * at a specific classification level.
  *
  * Access Rule: userClearance >= messageClearance
- * - TOP-SECRET clearance can decrypt: top-secret, restricted, confidential, internal, unclassified
- * - RESTRICTED clearance can decrypt: restricted, confidential, internal, unclassified
- * - CONFIDENTIAL clearance can decrypt: confidential, internal, unclassified
- * - INTERNAL clearance can decrypt: internal, unclassified
- * - No clearance can decrypt: unclassified only
+ * - TOP-SECRET clearance can decrypt: top-secret, restricted, confidential, internal
+ * - RESTRICTED clearance can decrypt: restricted, confidential, internal
+ * - CONFIDENTIAL clearance can decrypt: confidential, internal
+ * - INTERNAL clearance can decrypt: internal only
  *
  * @param userLevel - User's clearance level
  * @param messageLevel - Message classification level
@@ -106,8 +102,6 @@ export function getLevelColor(level: SecurityLevel): string {
     case SecurityLevel.CONFIDENTIAL:
       return 'yellow';
     case SecurityLevel.INTERNAL:
-      return 'cyan';
-    case SecurityLevel.UNCLASSIFIED:
     default:
       return 'green';
   }
@@ -117,10 +111,10 @@ export function getLevelColor(level: SecurityLevel): string {
  * Get icon for a security level
  *
  * @param level - Security level
- * @returns Emoji icon (unlocked for unclassified, locked for classified)
+ * @returns Emoji icon (locked for all classified documents)
  */
 export function getLevelIcon(level: SecurityLevel): string {
-  return level === SecurityLevel.UNCLASSIFIED ? '🔓' : '🔒';
+  return '🔒';
 }
 
 /**
@@ -131,12 +125,12 @@ export function getLevelIcon(level: SecurityLevel): string {
  *
  * @example
  * getAccessibleLevels(SecurityLevel.RESTRICTED)
- * // [SecurityLevel.RESTRICTED, SecurityLevel.CONFIDENTIAL, SecurityLevel.INTERNAL, SecurityLevel.UNCLASSIFIED]
+ * // [SecurityLevel.RESTRICTED, SecurityLevel.CONFIDENTIAL, SecurityLevel.INTERNAL]
  */
 export function getAccessibleLevels(userLevel: SecurityLevel): SecurityLevel[] {
   const levels: SecurityLevel[] = [];
 
-  for (let level = userLevel; level >= SecurityLevel.UNCLASSIFIED; level--) {
+  for (let level = userLevel; level >= SecurityLevel.INTERNAL; level--) {
     levels.push(level);
   }
 
@@ -150,5 +144,5 @@ export function getAccessibleLevels(userLevel: SecurityLevel): SecurityLevel[] {
  * @returns true if valid, false otherwise
  */
 export function isValidSecurityLevel(level: number): boolean {
-  return level >= SecurityLevel.UNCLASSIFIED && level <= SecurityLevel.TOP_SECRET;
+  return level >= SecurityLevel.INTERNAL && level <= SecurityLevel.TOP_SECRET;
 }

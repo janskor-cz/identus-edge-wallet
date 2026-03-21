@@ -1,6 +1,6 @@
 import { useMountedApp } from "@/reducers/store";
 import Link from "next/link";
-import React, { useEffect, useState } from "react";
+import React, { useState, useMemo } from "react";
 
 export function PageHeader({ children }) {
     const app = useMountedApp();
@@ -39,6 +39,31 @@ export function PageHeader({ children }) {
 
     const [isClicked, setIsClicked] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
+
+    // Get uniqueId from RealPerson VC
+    const realPersonUniqueId = useMemo(() => {
+        const credentials = app.credentials || [];
+
+        for (const cred of credentials) {
+            try {
+                // Get the credential subject from claims[0]
+                const subject = cred.claims?.[0];
+                if (!subject) continue;
+
+                // Check if this is a RealPerson credential
+                const credType = subject.credentialType;
+                const isRealPerson = credType === 'RealPersonIdentity' || credType === 'RealPerson';
+
+                // Field is 'uniqueId' not 'holderUniqueId'
+                if (isRealPerson && subject.uniqueId) {
+                    return subject.uniqueId;
+                }
+            } catch (e) {
+                console.error('[PageHeader] Error parsing credential:', e);
+            }
+        }
+        return null;
+    }, [app.credentials]);
 
     return (
         <div className="relative w-full max-w-screen-lg mx-auto">
@@ -91,11 +116,11 @@ export function PageHeader({ children }) {
                                 <p className="text-sm sm:text-base font-medium">
                                     <b>Status:</b> {app.agent.instance?.state ?? "initializing..."}
                                 </p>
-                                {app.agent.instance?.state === "running" && app.agent.selfDID && (
+                                {app.agent.instance?.state === "running" && realPersonUniqueId && (
                                     <button
                                         onClick={() => {
                                             navigator.clipboard
-                                                .writeText(app.agent.selfDID!.toString())
+                                                .writeText(realPersonUniqueId)
                                                 .then(() => {
                                                     setIsClicked(true);
                                                     setTimeout(() => setIsClicked(false), 300);
@@ -103,8 +128,9 @@ export function PageHeader({ children }) {
                                         }}
                                         className={`text-xs sm:text-sm text-blue-500 transition-transform duration-300 ${isClicked ? "scale-110" : ""
                                             }`}
+                                        title={`Unique ID: ${realPersonUniqueId}`}
                                     >
-                                        Copy DID
+                                        Copy Unique ID
                                     </button>
                                 )}
                             </div>

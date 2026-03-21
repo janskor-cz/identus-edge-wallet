@@ -242,12 +242,12 @@ export function verifyKeyVCBinding(
  * @example
  * const vc = credentials.find(c => c.type.includes('SecurityClearanceCredential'));
  * const level = getVCClearanceLevel(vc);
- * // SecurityLevel.SECRET
+ * // SecurityLevel.RESTRICTED
  */
 export function getVCClearanceLevel(vc: any): SecurityLevel {
   if (!vc) {
-    console.warn('⚠️ [keyVCBinding] No VC provided, defaulting to UNCLASSIFIED');
-    return SecurityLevel.UNCLASSIFIED;
+    console.warn('⚠️ [keyVCBinding] No VC provided, defaulting to INTERNAL');
+    return SecurityLevel.INTERNAL;
   }
 
   // Try credentialSubject first (standard JWT structure)
@@ -259,8 +259,8 @@ export function getVCClearanceLevel(vc: any): SecurityLevel {
   }
 
   if (!clearanceLevelStr) {
-    console.warn('⚠️ [keyVCBinding] VC missing clearanceLevel, defaulting to UNCLASSIFIED');
-    return SecurityLevel.UNCLASSIFIED;
+    console.warn('⚠️ [keyVCBinding] VC missing clearanceLevel, defaulting to INTERNAL');
+    return SecurityLevel.INTERNAL;
   }
 
   return parseSecurityLevel(clearanceLevelStr);
@@ -627,7 +627,7 @@ export function extractDualKeyFromVC(vc: any): { ed25519: string; x25519: string
  *   headers: { 'Content-Type': 'application/json' },
  *   body: JSON.stringify({
  *     ...publicKeys,
- *     clearanceLevel: 'SECRET'
+ *     clearanceLevel: 'RESTRICTED'
  *   })
  * });
  */

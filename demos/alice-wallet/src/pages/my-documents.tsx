@@ -51,14 +51,18 @@ import { ClassifiedDocumentViewer } from "@/components/ClassifiedDocumentViewer"
  */
 const getClassificationBadge = (level: string) => {
   switch (level?.toUpperCase()) {
-    case 'UNCLASSIFIED':
-      return { color: 'bg-green-100 text-green-800 border-green-300', label: 'UNCLASSIFIED' };
+    case 'INTERNAL':
+    case 'UNCLASSIFIED':  // Legacy support
+      return { color: 'bg-green-100 text-green-800 border-green-300', label: 'INTERNAL' };
     case 'CONFIDENTIAL':
       return { color: 'bg-blue-100 text-blue-800 border-blue-300', label: 'CONFIDENTIAL' };
-    case 'SECRET':
-      return { color: 'bg-orange-100 text-orange-800 border-orange-300', label: 'SECRET' };
+    case 'RESTRICTED':
+    case 'SECRET':  // Legacy support
+      return { color: 'bg-orange-100 text-orange-800 border-orange-300', label: 'RESTRICTED' };
     case 'TOP_SECRET':
-      return { color: 'bg-red-100 text-red-800 border-red-300', label: 'TOP SECRET' };
+    case 'TOP-SECRET':
+    case 'TOPSECRET':
+      return { color: 'bg-red-100 text-red-800 border-red-300', label: 'TOP-SECRET' };
     default:
       return { color: 'bg-gray-100 text-gray-800 border-gray-300', label: level || 'UNKNOWN' };
   }

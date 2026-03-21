@@ -14,6 +14,7 @@ import { DIDCommContext } from "./Context";
 interface Args {
   offer: OfferCredential;
   subjectDID?: Domain.DID;  // Optional: use existing PRISM DID instead of creating new one
+  alias?: string;  // Optional: alias for newly created PRISM DID
 }
 
 export class HandleOfferCredential extends Task<RequestCredential, Args> {
@@ -80,9 +81,11 @@ export class HandleOfferCredential extends Task<RequestCredential, Args> {
           throw new Error(`No private keys found for existing DID: ${did.toString()}`);
         }
 
-        // Find the authentication key (Ed25519 - AUTHENTICATION_KEY purpose)
-        // Cloud Agent requires EdDSA (Ed25519) signatures, NOT ES256K (SECP256K1)
-        authSk = storedKeys.find(key => key.curve === Domain.Curve.ED25519) || storedKeys[storedKeys.length - 1];
+        // Find the master key (SECP256K1) for credential request signing
+        // Cloud Agent expects ES256K (SECP256K1) signatures, matching original SDK behavior
+        console.log(`🔑 [HandleOfferCredential] Looking for SECP256K1 key. Available keys:`, storedKeys.map(k => ({ curve: k.curve, type: k.type })));
+        authSk = storedKeys.find(key => key.curve === Domain.Curve.SECP256K1) || storedKeys[storedKeys.length - 1];
+        console.log(`🔑 [HandleOfferCredential] Selected key curve: ${authSk?.curve}`);
 
         if (!authSk) {
           throw new Error(`No suitable authentication key found for DID: ${did.toString()}`);
@@ -114,7 +117,7 @@ export class HandleOfferCredential extends Task<RequestCredential, Args> {
           ]
         );
 
-        await ctx.Pluto.storeDID(did, [masterSk, authSk]);
+        await ctx.Pluto.storeDID(did, [masterSk, authSk], this.args.alias);
       }
 
       credRequestBuffer = await ctx.Pollux.processCredentialOffer<Domain.CredentialType.JWT>(payload, {
@@ -174,7 +177,7 @@ export class HandleOfferCredential extends Task<RequestCredential, Args> {
           ]
         );
 
-        await ctx.Pluto.storeDID(did, [masterSk, authSk]);
+        await ctx.Pluto.storeDID(did, [masterSk, authSk], this.args.alias);
       }
 
       credRequestBuffer = await ctx.Pollux.processCredentialOffer<Domain.CredentialType.SDJWT>(payload, {

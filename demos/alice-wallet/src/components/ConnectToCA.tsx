@@ -247,7 +247,8 @@ export const ConnectToCA: React.FC = () => {
         const result = await dispatch(createLongFormPrismDID({
           agent,
           alias: userName.trim(),
-          defaultSeed
+          defaultSeed,
+          mediatorUri: 'https://identuslabel.cz/mediator'
         })).unwrap();
 
         newPrismDID = result.did.toString();

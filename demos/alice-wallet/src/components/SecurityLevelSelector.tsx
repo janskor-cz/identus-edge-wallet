@@ -22,11 +22,11 @@ function getBadgeColorClasses(level: SecurityLevel): string {
   switch (level) {
     case SecurityLevel.TOP_SECRET:
       return 'bg-red-100 text-red-800 border-red-300 dark:bg-red-900 dark:text-red-200 dark:border-red-700';
-    case SecurityLevel.SECRET:
+    case SecurityLevel.RESTRICTED:
       return 'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-900 dark:text-orange-200 dark:border-orange-700';
     case SecurityLevel.CONFIDENTIAL:
       return 'bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900 dark:text-yellow-200 dark:border-yellow-700';
-    case SecurityLevel.UNCLASSIFIED:
+    case SecurityLevel.INTERNAL:
     default:
       return 'bg-green-100 text-green-800 border-green-300 dark:bg-green-900 dark:text-green-200 dark:border-green-700';
   }
@@ -39,11 +39,11 @@ function getSelectColorClasses(level: SecurityLevel): string {
   switch (level) {
     case SecurityLevel.TOP_SECRET:
       return 'border-red-400 focus:border-red-500 focus:ring-red-500';
-    case SecurityLevel.SECRET:
+    case SecurityLevel.RESTRICTED:
       return 'border-orange-400 focus:border-orange-500 focus:ring-orange-500';
     case SecurityLevel.CONFIDENTIAL:
       return 'border-yellow-400 focus:border-yellow-500 focus:ring-yellow-500';
-    case SecurityLevel.UNCLASSIFIED:
+    case SecurityLevel.INTERNAL:
     default:
       return 'border-green-400 focus:border-green-500 focus:ring-green-500';
   }
@@ -58,8 +58,8 @@ export const SecurityLevelSelector: React.FC<SecurityLevelSelectorProps> = ({
   // Get all levels the user has clearance for
   const accessibleLevels = getAccessibleLevels(userMaxLevel);
 
-  // Check if user has no clearance (only UNCLASSIFIED available)
-  const hasNoClearance = userMaxLevel === SecurityLevel.UNCLASSIFIED;
+  // Check if user has no clearance (only INTERNAL available)
+  const hasNoClearance = userMaxLevel === SecurityLevel.INTERNAL;
 
   return (
     <div className="mb-3">
